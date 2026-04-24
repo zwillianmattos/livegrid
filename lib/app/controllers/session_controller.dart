@@ -141,6 +141,20 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  Future<void> setVerticalCropCenter(double value) async {
+    final clamped = value.clamp(0.0, 1.0).toDouble();
+    if (_profile.verticalCropCenterX == clamped) return;
+    _profile = _profile.copyWith(verticalCropCenterX: clamped);
+    notifyListeners();
+    if (isLive) {
+      try {
+        await _bridge.setVerticalCrop(clamped);
+      } catch (e) {
+        _setError('setVerticalCrop failed: $e');
+      }
+    }
+  }
+
   Future<void> refreshWifiBand() async {
     _wifiBand = await _bridge.wifiBand();
     notifyListeners();

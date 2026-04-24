@@ -76,6 +76,11 @@ class FlutterBridge(
                 pipeline.requestKeyframes()
                 result.success(null)
             }
+            "setVerticalCrop" -> {
+                val x = (call.argument<Any>("centerX") as? Number)?.toFloat()
+                if (x != null) pipeline.setVerticalCropCenter(x)
+                result.success(null)
+            }
             "wifiBand" -> result.success(currentWifiBand())
             else -> result.notImplemented()
         }
@@ -117,6 +122,9 @@ class FlutterBridge(
             ?: return result.error("bad_profile", "horizontal inválido", null)
         val vProfile = extractProfile(profile?.get("vertical") as? Map<*, *>, "V")
             ?: return result.error("bad_profile", "vertical inválido", null)
+
+        val cropCenterX = (profile?.get("verticalCropCenterX") as? Number)?.toFloat() ?: 0.5f
+        pipeline.setVerticalCropCenter(cropCenterX)
 
         val obsHost = (network?.get("obsHost") as? String)?.trim().orEmpty()
         val hPort = (network?.get("horizontalPort") as? Number)?.toInt() ?: 9000

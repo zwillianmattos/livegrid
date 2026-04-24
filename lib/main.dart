@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'app/controllers/session_controller.dart';
 import 'app/pages/live_page.dart';
+import 'app/theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,6 +11,18 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarBrightness: Brightness.dark,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Color(0xFF000000),
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.immersiveSticky,
+  );
   runApp(const LiveGridApp());
 }
 
@@ -33,13 +46,8 @@ class _LiveGridAppState extends State<LiveGridApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'LiveGrid',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.red,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.dark(),
       home: LivePage(controller: _controller),
     );
   }

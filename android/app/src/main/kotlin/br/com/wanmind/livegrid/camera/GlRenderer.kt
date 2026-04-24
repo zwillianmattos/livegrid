@@ -36,6 +36,13 @@ class GlRenderer(private val core: GlCore) {
     private var sensorWidth = 0
     private var sensorHeight = 0
 
+    @Volatile
+    private var verticalCropCenterX: Float = 0.5f
+
+    fun setVerticalCropCenter(value: Float) {
+        verticalCropCenterX = value.coerceIn(0f, 1f)
+    }
+
     private val targets = CopyOnWriteArrayList<Target>()
     private val texMatrix = FloatArray(16)
 
@@ -140,7 +147,9 @@ class GlRenderer(private val core: GlCore) {
             CROP_VERTICAL_9_16 -> {
                 val w = sensorHeight * 9f / 16f
                 val scale = w / sensorWidth
-                floatArrayOf(scale, 1f, (1f - scale) * 0.5f, 0f)
+                val offsetX = (verticalCropCenterX - scale / 2f)
+                    .coerceIn(0f, 1f - scale)
+                floatArrayOf(scale, 1f, offsetX, 0f)
             }
             CROP_HORIZONTAL_16_9 -> {
                 val h = sensorWidth * 9f / 16f

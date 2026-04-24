@@ -71,6 +71,12 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             horizontalEncoder?.requestKeyframe()
             verticalEncoder?.requestKeyframe()
             result(nil)
+        case "setVerticalCrop":
+            if let args = call.arguments as? [String: Any],
+               let x = args["centerX"] as? Double {
+                preview?.setVerticalCropCenter(CGFloat(x))
+            }
+            result(nil)
         case "wifiBand":
             result("unknown")
         default:
@@ -122,6 +128,9 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             result(FlutterError(code: "bad_profile", message: "perfis ausentes", details: nil))
             return
         }
+
+        let cropCenterX = (profile["verticalCropCenterX"] as? Double) ?? 0.5
+        preview?.setVerticalCropCenter(CGFloat(cropCenterX))
         let hW = (hMap["width"] as? Int) ?? 1920
         let hH = (hMap["height"] as? Int) ?? 1080
         let hFps = (hMap["fps"] as? Int) ?? 30

@@ -1,17 +1,39 @@
 enum CaptureResolution {
   uhd4032x3024(4032, 3024),
   uhd3840x2160(3840, 2160),
-  fhd2880x2160(2880, 2160);
+  fhd2880x2160(2880, 2160),
+  fhd1920x1080(1920, 1080),
+  hd1280x720(1280, 720);
 
   const CaptureResolution(this.width, this.height);
 
   final int width;
   final int height;
 
-  bool get coversVertical1080p {
-    final cropW = (height * 9) ~/ 16;
-    return cropW >= 1080;
+  int get verticalCropWidth => (height * 9) ~/ 16;
+  int get verticalCropHeight => height;
+
+  bool get coversVertical1080p => verticalCropWidth >= 1080;
+
+  VerticalQuality get verticalQuality {
+    final w = verticalCropWidth;
+    if (w >= 1440) return VerticalQuality.pristine;
+    if (w >= 1080) return VerticalQuality.fullHd;
+    if (w >= 720) return VerticalQuality.reduced;
+    return VerticalQuality.sub;
   }
+}
+
+enum VerticalQuality {
+  pristine('FHD+', 'Acima de 1080p'),
+  fullHd('FHD', '1080p cheio'),
+  reduced('HD', 'Upscale do encoder'),
+  sub('SUB-HD', 'Upscale agressivo');
+
+  const VerticalQuality(this.label, this.description);
+
+  final String label;
+  final String description;
 }
 
 class EncoderProfile {
@@ -68,12 +90,14 @@ class SessionProfile {
     required this.horizontal,
     required this.vertical,
     this.cameraId,
+    this.verticalCropCenterX = 0.5,
   });
 
   final CaptureResolution capture;
   final EncoderProfile horizontal;
   final EncoderProfile vertical;
   final String? cameraId;
+  final double verticalCropCenterX;
 
   static const defaultProfile = SessionProfile(
     capture: CaptureResolution.uhd3840x2160,
@@ -86,12 +110,14 @@ class SessionProfile {
     EncoderProfile? horizontal,
     EncoderProfile? vertical,
     String? cameraId,
+    double? verticalCropCenterX,
   }) =>
       SessionProfile(
         capture: capture ?? this.capture,
         horizontal: horizontal ?? this.horizontal,
         vertical: vertical ?? this.vertical,
         cameraId: cameraId ?? this.cameraId,
+        verticalCropCenterX: verticalCropCenterX ?? this.verticalCropCenterX,
       );
 
   Map<String, Object?> toMap() => {
@@ -102,5 +128,6 @@ class SessionProfile {
         'horizontal': horizontal.toMap(),
         'vertical': vertical.toMap(),
         'cameraId': cameraId,
+        'verticalCropCenterX': verticalCropCenterX,
       };
 }

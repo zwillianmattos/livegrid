@@ -106,6 +106,9 @@ class CapturePipeline(
 
     fun setHorizontalBitrate(bps: Int) = encoderPool.setHorizontalBitrate(bps)
     fun setVerticalBitrate(bps: Int) = encoderPool.setVerticalBitrate(bps)
+    fun setVerticalCropCenter(value: Float) {
+        renderer?.setVerticalCropCenter(value)
+    }
     fun requestKeyframes() = encoderPool.requestKeyframes()
     fun horizontalBitrate(): Int = encoderPool.horizontalBitrate()
     fun verticalBitrate(): Int = encoderPool.verticalBitrate()

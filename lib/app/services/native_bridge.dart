@@ -64,6 +64,17 @@ class NativeBridge {
     await _control.invokeMethod<void>('requestKeyframe');
   }
 
+  Future<void> setVerticalCrop(double centerX) async {
+    try {
+      await _control.invokeMethod<void>(
+        'setVerticalCrop',
+        {'centerX': centerX},
+      );
+    } on MissingPluginException {
+      return;
+    }
+  }
+
   Future<WifiBand> wifiBand() async {
     final raw = await _control.invokeMethod<String>('wifiBand');
     switch (raw) {

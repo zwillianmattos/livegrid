@@ -17,6 +17,14 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     private var verticalEncoder: VideoEncoder?
     private var verticalPool: CVPixelBufferPool?
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var verticalCropCenterX: CGFloat = 0.5
+
+    func setVerticalCropCenter(_ value: CGFloat) {
+        let clamped = max(0, min(1, value))
+        queue.async { [weak self] in
+            self?.verticalCropCenterX = clamped
+        }
+    }
 
     private var frameIndex: Int64 = 0
     private let fps: Int32 = 30
@@ -143,7 +151,9 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         let targetAspect: CGFloat = CGFloat(VERTICAL_WIDTH) / CGFloat(VERTICAL_HEIGHT)
         let cropWidth = sh * targetAspect
         let cropHeight = sh
-        let cropX = (sw - cropWidth) / 2.0
+        let maxLeft = max(0, sw - cropWidth)
+        let desiredLeft = verticalCropCenterX * sw - cropWidth / 2.0
+        let cropX = min(max(0, desiredLeft), maxLeft)
         let cropY: CGFloat = 0
 
         var ci = CIImage(cvPixelBuffer: source)
