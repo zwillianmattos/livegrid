@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../constants/crop.dart';
 import '../controllers/session_controller.dart';
+import '../theme/page_routes.dart';
 import '../widgets/atoms/blur_icon_button.dart';
 import '../widgets/live/crop_panel.dart';
 import '../widgets/live/draggable_pip.dart';
@@ -84,8 +85,8 @@ class _LivePageState extends State<LivePage>
 
   void _openSettings() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SettingsPage(controller: widget.controller),
+      fadeRoute(
+        (_) => SettingsPage(controller: widget.controller),
       ),
     );
   }

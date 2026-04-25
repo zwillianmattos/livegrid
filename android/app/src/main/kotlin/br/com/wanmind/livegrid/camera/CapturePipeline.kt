@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.util.Log
 import android.view.Surface
+import android.view.WindowManager
 import br.com.wanmind.livegrid.encoder.EncoderPool
 import br.com.wanmind.livegrid.encoder.HardwareEncoder
 import br.com.wanmind.livegrid.stream.UdpPublisher
@@ -36,10 +37,17 @@ class CapturePipeline(
         return entry.id()
     }
 
+    var captureWidth: Int? = null
+        private set
+    var captureHeight: Int? = null
+        private set
+
     fun startPreview(
         cameraId: String?,
         previewWidth: Int,
         previewHeight: Int,
+        captureWidth: Int? = null,
+        captureHeight: Int? = null,
         onError: (String) -> Unit,
     ) {
         if (previewRunning.getAndSet(true)) return
@@ -54,16 +62,29 @@ class CapturePipeline(
         val r = GlRenderer(c)
         renderer = r
         val resolved = resolveCameraId(cameraId)
+        this.captureWidth = captureWidth
+        this.captureHeight = captureHeight
 
+        val displayRotation = queryDisplayRotationDegrees()
         r.setup { inputSurface ->
             previewTarget = r.addTarget(target, previewWidth, previewHeight, GlRenderer.CROP_FULL)
             camera = OpenGateCamera(context).also { cam ->
                 cam.open(
                     cameraId = resolved,
                     outputs = listOf(inputSurface),
+                    targetWidth = captureWidth,
+                    targetHeight = captureHeight,
                     onReady = { res ->
-                        r.configureInputSize(res.width, res.height)
-                        Log.i(TAG, "preview $resolved ${res.width}x${res.height}")
+                        r.configureInputSize(
+                            width = res.width,
+                            height = res.height,
+                            sensorOrientation = res.sensorOrientation,
+                            displayRotation = displayRotation,
+                        )
+                        Log.i(
+                            TAG,
+                            "preview $resolved ${res.width}x${res.height} sensor=${res.sensorOrientation} display=$displayRotation",
+                        )
                     },
                     onError = { msg ->
                         previewRunning.set(false)
@@ -112,6 +133,10 @@ class CapturePipeline(
     fun requestKeyframes() = encoderPool.requestKeyframes()
     fun horizontalBitrate(): Int = encoderPool.horizontalBitrate()
     fun verticalBitrate(): Int = encoderPool.verticalBitrate()
+    fun horizontalPublisherSnapshot(): UdpPublisher.Snapshot? =
+        encoderPool.horizontalPublisherSnapshot()
+    fun verticalPublisherSnapshot(): UdpPublisher.Snapshot? =
+        encoderPool.verticalPublisherSnapshot()
     val isRecording: Boolean get() = encoderPool.isRunning
 
     fun stopAll() {
@@ -133,6 +158,19 @@ class CapturePipeline(
         stopAll()
         textureEntry?.release()
         textureEntry = null
+    }
+
+    @Suppress("DEPRECATION")
+    private fun queryDisplayRotationDegrees(): Int {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        val rotation = wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+        return when (rotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
     }
 
     private fun resolveCameraId(requested: String?): String {

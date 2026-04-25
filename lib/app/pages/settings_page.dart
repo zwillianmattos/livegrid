@@ -4,7 +4,6 @@ import '../controllers/session_controller.dart';
 import '../models/camera_info.dart';
 import '../models/resolution_profile.dart';
 import '../theme/app_theme.dart';
-import '../widgets/atoms/section_card.dart';
 import '../widgets/settings/resolution_row.dart';
 import '../widgets/settings/slider_row.dart';
 import '../widgets/settings/url_preview.dart';
@@ -18,14 +17,15 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage>
+    with SingleTickerProviderStateMixin {
   late CaptureResolution _capture;
   late int _horizontalKbps;
   late int _verticalKbps;
-  late int _srtLatency;
   late TextEditingController _obsHostCtrl;
   late TextEditingController _hPortCtrl;
   late TextEditingController _vPortCtrl;
+  late TabController _tabController;
   String? _cameraId;
 
   @override
@@ -36,11 +36,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _capture = p.capture;
     _horizontalKbps = p.horizontal.bitrateBps ~/ 1000;
     _verticalKbps = p.vertical.bitrateBps ~/ 1000;
-    _srtLatency = n.srtLatencyMs;
     _obsHostCtrl = TextEditingController(text: n.obsHost);
     _hPortCtrl = TextEditingController(text: '${n.horizontalPort}');
     _vPortCtrl = TextEditingController(text: '${n.verticalPort}');
     _cameraId = p.cameraId ?? widget.controller.selectedCamera?.id;
+    _tabController = TabController(length: 4, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureCameras());
   }
 
@@ -49,6 +49,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _obsHostCtrl.dispose();
     _hPortCtrl.dispose();
     _vPortCtrl.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -65,7 +66,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppColors.surface,
       body: SafeArea(
         child: Column(
           children: [
@@ -73,16 +74,45 @@ class _SettingsPageState extends State<SettingsPage> {
               onClose: () => Navigator.of(context).pop(),
               onSave: _save,
             ),
-            const Divider(height: 1, color: AppColors.hairline),
+            TabBar(
+              controller: _tabController,
+              tabs: const [
+                Tab(text: 'Câmera'),
+                Tab(text: 'Captura'),
+                Tab(text: 'Rede'),
+                Tab(text: 'Qualidade'),
+              ],
+              labelColor: AppColors.text,
+              unselectedLabelColor: AppColors.textMuted,
+              indicatorColor: AppColors.text,
+              indicatorSize: TabBarIndicatorSize.label,
+              indicatorWeight: 2,
+              dividerColor: AppColors.hairline,
+              dividerHeight: 1,
+              labelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.1,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.1,
+              ),
+              overlayColor: WidgetStatePropertyAll(
+                AppColors.text.withValues(alpha: 0.04),
+              ),
+              splashFactory: NoSplash.splashFactory,
+            ),
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth > 720;
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
-                    child: wide ? _wideLayout() : _narrowLayout(),
-                  );
-                },
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _panel(_cameraBody()),
+                  _panel(_captureBody()),
+                  _panel(_networkBody()),
+                  _panel(_qualityBody()),
+                ],
               ),
             ),
           ],
@@ -91,76 +121,63 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _wideLayout() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _cameraCard(),
-              const SizedBox(height: 16),
-              _captureCard(),
-            ],
-          ),
+  Widget _panel(Widget child) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: child,
         ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _networkCard(),
-              const SizedBox(height: 16),
-              _qualityCard(),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _narrowLayout() {
+  Widget _cameraBody() {
+    final cameras = widget.controller.cameras;
+    if (cameras.isEmpty) {
+      return const _EmptyState(
+        icon: Icons.videocam_off_outlined,
+        title: 'Nenhuma câmera encontrada',
+        message:
+            'Verifique permissões e reconecte o dispositivo para continuar.',
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _cameraCard(),
-        const SizedBox(height: 16),
-        _captureCard(),
-        const SizedBox(height: 16),
-        _networkCard(),
-        const SizedBox(height: 16),
-        _qualityCard(),
-      ],
-    );
-  }
-
-  Widget _cameraCard() {
-    final cameras = widget.controller.cameras;
-    return SectionCard(
-      title: 'CÂMERA',
-      children: [
-        if (cameras.isEmpty)
-          const _EmptyRow(
-            icon: Icons.videocam_off,
-            message: 'Nenhuma câmera encontrada',
-          )
-        else
-          DropdownButtonFormField<String>(
-            initialValue: _cameraIdOrDefault(cameras),
-            dropdownColor: AppColors.surfaceHigh,
-            icon: const Icon(Icons.expand_more, color: AppColors.textMuted),
-            decoration: const InputDecoration(labelText: 'Dispositivo'),
-            style: const TextStyle(color: AppColors.text, fontSize: 13),
-            items: [
-              for (final cam in cameras)
-                DropdownMenuItem(
+        DropdownButtonFormField<String>(
+          isExpanded: true,
+          initialValue: _cameraIdOrDefault(cameras),
+          dropdownColor: AppColors.surfaceHigh,
+          icon: const Icon(Icons.expand_more, color: AppColors.textMuted),
+          decoration: const InputDecoration(labelText: 'Dispositivo'),
+          style: const TextStyle(color: AppColors.text, fontSize: 13),
+          items: cameras
+              .map(
+                (cam) => DropdownMenuItem(
                   value: cam.id,
-                  child: Text(_cameraLabel(cam)),
+                  child: Text(
+                    _cameraLabel(cam),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
-            ],
-            onChanged: (v) => setState(() => _cameraId = v),
-          ),
+              )
+              .toList(),
+          selectedItemBuilder: (context) => cameras
+              .map(
+                (cam) => Text(
+                  _cameraLabel(cam),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  softWrap: false,
+                ),
+              )
+              .toList(),
+          onChanged: (v) => setState(() => _cameraId = v),
+        ),
         const SizedBox(height: 12),
         Align(
           alignment: Alignment.centerLeft,
@@ -171,36 +188,31 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() {});
             },
             icon: const Icon(Icons.refresh, size: 14),
-            label: const Text('Atualizar lista'),
+            label: const Text('ATUALIZAR LISTA'),
           ),
         ),
       ],
     );
   }
 
-  Widget _captureCard() {
-    return SectionCard(
-      title: 'CAPTURA',
-      children: [
-        RadioGroup<CaptureResolution>(
-          groupValue: _capture,
-          onChanged: (v) {
-            if (v != null) setState(() => _capture = v);
-          },
-          child: Column(
-            children: [
-              for (final r in CaptureResolution.values)
-                ResolutionRow(resolution: r),
-            ],
-          ),
-        ),
-      ],
+  Widget _captureBody() {
+    return RadioGroup<CaptureResolution>(
+      groupValue: _capture,
+      onChanged: (v) {
+        if (v != null) setState(() => _capture = v);
+      },
+      child: Column(
+        children: [
+          for (final r in CaptureResolution.values)
+            ResolutionRow(resolution: r),
+        ],
+      ),
     );
   }
 
-  Widget _networkCard() {
-    return SectionCard(
-      title: 'REDE',
+  Widget _networkBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
           controller: _obsHostCtrl,
@@ -236,35 +248,21 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        SliderRow(
-          label: 'Latência SRT',
-          value: _srtLatency.toDouble(),
-          min: 80,
-          max: 400,
-          divisions: 16,
-          display: '$_srtLatency ms',
-          onChanged: (v) => setState(() => _srtLatency = v.toInt()),
-        ),
         if (_obsHostCtrl.text.trim().isNotEmpty) ...[
-          const SizedBox(height: 16),
-          UrlPreview(
-            label: 'HORIZONTAL',
-            url: 'udp://${_obsHostCtrl.text.trim()}:${_hPortCtrl.text}',
-          ),
-          const SizedBox(height: 6),
-          UrlPreview(
-            label: 'VERTICAL',
-            url: 'udp://${_obsHostCtrl.text.trim()}:${_vPortCtrl.text}',
+          const SizedBox(height: 24),
+          _UrlPreviewBlock(
+            host: _obsHostCtrl.text.trim(),
+            hPort: _hPortCtrl.text,
+            vPort: _vPortCtrl.text,
           ),
         ],
       ],
     );
   }
 
-  Widget _qualityCard() {
-    return SectionCard(
-      title: 'QUALIDADE',
+  Widget _qualityBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SliderRow(
           label: 'Horizontal',
@@ -275,7 +273,7 @@ class _SettingsPageState extends State<SettingsPage> {
           display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
           onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 28),
         SliderRow(
           label: 'Vertical',
           value: _verticalKbps.toDouble(),
@@ -323,11 +321,12 @@ class _SettingsPageState extends State<SettingsPage> {
     widget.controller.updateNetwork(
       widget.controller.network.copyWith(
         obsHost: _obsHostCtrl.text.trim(),
-        horizontalPort: int.tryParse(_hPortCtrl.text) ??
+        horizontalPort:
+            int.tryParse(_hPortCtrl.text) ??
             widget.controller.network.horizontalPort,
-        verticalPort: int.tryParse(_vPortCtrl.text) ??
+        verticalPort:
+            int.tryParse(_vPortCtrl.text) ??
             widget.controller.network.verticalPort,
-        srtLatencyMs: _srtLatency,
       ),
     );
     Navigator.of(context).pop();
@@ -363,32 +362,84 @@ class _SettingsHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          TextButton(onPressed: onClose, child: const Text('Cancelar')),
+          TextButton(onPressed: onClose, child: const Text('CANCELAR')),
           const SizedBox(width: 8),
-          FilledButton(onPressed: onSave, child: const Text('Salvar')),
+          FilledButton(onPressed: onSave, child: const Text('SALVAR')),
         ],
       ),
     );
   }
 }
 
-class _EmptyRow extends StatelessWidget {
-  const _EmptyRow({required this.icon, required this.message});
+class _UrlPreviewBlock extends StatelessWidget {
+  const _UrlPreviewBlock({
+    required this.host,
+    required this.hPort,
+    required this.vPort,
+  });
+
+  final String host;
+  final String hPort;
+  final String vPort;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border.fromBorderSide(BorderSide(color: AppColors.hairline)),
+      ),
+      child: Column(
+        children: [
+          UrlPreview(label: 'HORIZONTAL', url: 'udp://$host:$hPort'),
+          const SizedBox(height: 6),
+          UrlPreview(label: 'VERTICAL', url: 'udp://$host:$vPort'),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
 
   final IconData icon;
+  final String title;
   final String message;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: AppColors.textFaint),
-        const SizedBox(width: 10),
-        Text(
-          message,
-          style: const TextStyle(color: AppColors.textSubtle, fontSize: 12),
-        ),
-      ],
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border.fromBorderSide(BorderSide(color: AppColors.hairline)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: AppColors.textFaint),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            message,
+            style: const TextStyle(color: AppColors.textSubtle, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }

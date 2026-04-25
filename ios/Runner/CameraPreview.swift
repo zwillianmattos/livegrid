@@ -47,12 +47,18 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         }
     }
 
-    func start(cameraId: String?) throws {
+    private(set) var captureWidth: Int?
+    private(set) var captureHeight: Int?
+
+    func start(cameraId: String?, captureWidth: Int? = nil, captureHeight: Int? = nil) throws {
+        let preset = presetFor(width: captureWidth, height: captureHeight)
+        self.captureWidth = captureWidth
+        self.captureHeight = captureHeight
         queue.sync {
             session.beginConfiguration()
             session.inputs.forEach { session.removeInput($0) }
             session.outputs.forEach { session.removeOutput($0) }
-            session.sessionPreset = .hd1920x1080
+            session.sessionPreset = preset
         }
 
         guard let device = resolveDevice(cameraId: cameraId) else {
@@ -210,6 +216,13 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
                 "maxHeight": Int(dims.height),
             ]
         }
+    }
+
+    private func presetFor(width: Int?, height: Int?) -> AVCaptureSession.Preset {
+        guard let h = height else { return .hd1920x1080 }
+        if h >= 2160 { return .hd4K3840x2160 }
+        if h >= 1080 { return .hd1920x1080 }
+        return .hd1280x720
     }
 
     private func resolveDevice(cameraId: String?) -> AVCaptureDevice? {

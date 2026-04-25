@@ -32,6 +32,7 @@ class SessionController extends ChangeNotifier {
   List<CameraInfo> _cameras = const [];
 
   StreamSubscription<StreamStats>? _statsSub;
+  ThermalStatus? _appliedThermal;
 
   SessionState get state => _state;
   int? get textureId => _textureId;
@@ -172,22 +173,31 @@ class SessionController extends ChangeNotifier {
 
   Future<void> _applyThermalPolicy(ThermalStatus status) async {
     if (!isLive) return;
+    if (_appliedThermal == status) return;
+    _appliedThermal = status;
+
+    final hBase = _profile.horizontal.bitrateBps;
+    final vBase = _profile.vertical.bitrateBps;
+
     switch (status) {
       case ThermalStatus.none:
       case ThermalStatus.light:
-        if (_state == SessionState.degraded) {
-          _state = SessionState.live;
-        }
+        _state = SessionState.live;
+        await _bridge.setBitrate(horizontalBps: hBase, verticalBps: vBase);
         break;
       case ThermalStatus.moderate:
         _state = SessionState.degraded;
         await _bridge.setBitrate(
-          horizontalBps: (_profile.horizontal.bitrateBps * 0.75).toInt(),
-          verticalBps: (_profile.vertical.bitrateBps * 0.75).toInt(),
+          horizontalBps: (hBase * 0.70).toInt(),
+          verticalBps: vBase,
         );
         break;
       case ThermalStatus.severe:
         _state = SessionState.degraded;
+        await _bridge.setBitrate(
+          horizontalBps: (hBase * 0.55).toInt(),
+          verticalBps: (vBase * 0.85).toInt(),
+        );
         await _bridge.switchResolution(CaptureResolution.fhd2880x2160);
         break;
       case ThermalStatus.critical:

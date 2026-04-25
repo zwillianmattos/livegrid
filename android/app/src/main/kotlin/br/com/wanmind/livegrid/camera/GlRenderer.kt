@@ -3,8 +3,10 @@ package br.com.wanmind.livegrid.camera
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -35,6 +37,7 @@ class GlRenderer(private val core: GlCore) {
 
     private var sensorWidth = 0
     private var sensorHeight = 0
+    private var rotationDegrees = 0
 
     @Volatile
     private var verticalCropCenterX: Float = 0.5f
@@ -44,7 +47,7 @@ class GlRenderer(private val core: GlCore) {
     }
 
     private val targets = CopyOnWriteArrayList<Target>()
-    private val texMatrix = FloatArray(16)
+    private val finalTexMatrix = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
     private val vertexBuffer: FloatBuffer = ByteBuffer
         .allocateDirect(QUAD.size * 4)
@@ -78,11 +81,35 @@ class GlRenderer(private val core: GlCore) {
         }
     }
 
-    fun configureInputSize(width: Int, height: Int) {
+    fun configureInputSize(
+        width: Int,
+        height: Int,
+        sensorOrientation: Int = 0,
+        displayRotation: Int = 0,
+    ) {
         handler.post {
-            sensorWidth = width
-            sensorHeight = height
             inputSurfaceTexture.setDefaultBufferSize(width, height)
+            val rotation = ((sensorOrientation - displayRotation) % 360 + 360) % 360
+            rotationDegrees = rotation
+            if (rotation == 90 || rotation == 270) {
+                sensorWidth = height
+                sensorHeight = width
+            } else {
+                sensorWidth = width
+                sensorHeight = height
+            }
+            Matrix.setIdentityM(finalTexMatrix, 0)
+            if (rotation != 0) {
+                Matrix.translateM(finalTexMatrix, 0, 0.5f, 0.5f, 0f)
+                Matrix.rotateM(finalTexMatrix, 0, rotation.toFloat(), 0f, 0f, 1f)
+                Matrix.translateM(finalTexMatrix, 0, -0.5f, -0.5f, 0f)
+            }
+            Matrix.translateM(finalTexMatrix, 0, 0f, 1f, 0f)
+            Matrix.scaleM(finalTexMatrix, 0, 1f, -1f, 1f)
+            Log.i(
+                TAG,
+                "configureInputSize buffer=${width}x${height} sensor=$sensorOrientation display=$displayRotation rot=$rotation effective=${sensorWidth}x${sensorHeight}",
+            )
         }
     }
 
@@ -106,7 +133,6 @@ class GlRenderer(private val core: GlCore) {
     private fun drawFrame() {
         if (sensorWidth == 0 || sensorHeight == 0) return
         inputSurfaceTexture.updateTexImage()
-        inputSurfaceTexture.getTransformMatrix(texMatrix)
         val ts = inputSurfaceTexture.timestamp
 
         val snapshot = targets.toList()
@@ -133,7 +159,7 @@ class GlRenderer(private val core: GlCore) {
         GLES20.glEnableVertexAttribArray(aTexCoord)
         GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 4 * 4, vertexBuffer)
 
-        GLES20.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
+        GLES20.glUniformMatrix4fv(uTexMatrix, 1, false, finalTexMatrix, 0)
         GLES20.glUniform4fv(uCrop, 1, cropUniform(target.cropMode), 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -185,6 +211,7 @@ class GlRenderer(private val core: GlCore) {
     }
 
     companion object {
+        private const val TAG = "GlRenderer"
         const val CROP_FULL = 0
         const val CROP_HORIZONTAL_16_9 = 1
         const val CROP_VERTICAL_9_16 = 2

@@ -113,13 +113,21 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         }
         let network = args["network"] as? [String: Any]
 
-        if let cameraId = profile["cameraId"] as? String,
-           !cameraId.isEmpty,
-           cameraId != activeCameraId,
-           let p = preview {
-            activeCameraId = cameraId
-            do { try p.start(cameraId: cameraId) } catch {
-                NSLog("switch camera failed: \(error.localizedDescription)")
+        let captureMap = profile["capture"] as? [String: Any]
+        let captureW = captureMap?["width"] as? Int
+        let captureH = captureMap?["height"] as? Int
+
+        let cameraId = profile["cameraId"] as? String
+        let cameraChanged = (cameraId.map { !$0.isEmpty && $0 != activeCameraId }) ?? false
+        let captureChanged = (captureW != nil && captureW != preview?.captureWidth) ||
+            (captureH != nil && captureH != preview?.captureHeight)
+
+        if (cameraChanged || captureChanged), let p = preview {
+            if let id = cameraId, !id.isEmpty { activeCameraId = id }
+            do {
+                try p.start(cameraId: activeCameraId, captureWidth: captureW, captureHeight: captureH)
+            } catch {
+                NSLog("restart camera failed: \(error.localizedDescription)")
             }
         }
 

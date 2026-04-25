@@ -49,6 +49,22 @@ class HardwareEncoder(
                 MediaFormat.KEY_BITRATE_MODE,
                 MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
             )
+            setInteger(
+                MediaFormat.KEY_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AVCProfileMain,
+            )
+            setInteger(
+                MediaFormat.KEY_LEVEL,
+                MediaCodecInfo.CodecProfileLevel.AVCLevel41,
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+                setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+                setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setInteger(MediaFormat.KEY_LATENCY, 1)
             }
@@ -57,13 +73,29 @@ class HardwareEncoder(
             }
         }
         c.setCallback(callback, handler)
-        c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        try {
+            c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        } catch (t: Throwable) {
+            Log.w(TAG, "configure Main falhou (${t.message}); fallback Baseline")
+            format.setInteger(
+                MediaFormat.KEY_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+            )
+            format.setInteger(
+                MediaFormat.KEY_LEVEL,
+                MediaCodecInfo.CodecProfileLevel.AVCLevel4,
+            )
+            c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        }
         val surface = c.createInputSurface()
         inputSurface = surface
         fos = outputFile?.let { FileOutputStream(it) }
         c.start()
         running.set(true)
-        Log.i(TAG, "encoder ${profile.label} -> ${outputFile?.absolutePath ?: "nofile"}")
+        Log.i(
+            TAG,
+            "encoder ${profile.label} ${profile.width}x${profile.height}@${profile.fps} bps=${profile.bitrateBps} gop=${profile.gop} -> ${outputFile?.absolutePath ?: "nofile"}",
+        )
         return surface
     }
 

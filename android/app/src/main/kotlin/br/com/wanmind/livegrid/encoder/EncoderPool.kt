@@ -94,6 +94,11 @@ class EncoderPool(private val recordingsDir: File) {
     fun horizontalBitrate(): Int = horizontal?.bitrateMeter?.sampleBps() ?: 0
     fun verticalBitrate(): Int = vertical?.bitrateMeter?.sampleBps() ?: 0
 
+    fun horizontalPublisherSnapshot(): UdpPublisher.Snapshot? =
+        publishers.horizontal?.snapshot()
+    fun verticalPublisherSnapshot(): UdpPublisher.Snapshot? =
+        publishers.vertical?.snapshot()
+
     val isRunning: Boolean get() = horizontal != null || vertical != null
 
     fun stop(renderer: GlRenderer) {

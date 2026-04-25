@@ -47,6 +47,7 @@ class FlutterBridge(
     private val handler = Handler(Looper.getMainLooper())
     private var statsRunning = false
     private var live = false
+    private var lastThermalLogged = -1
 
     private var activeCameraId: String? = null
 
@@ -107,13 +108,23 @@ class FlutterBridge(
         val profile = call.argument<Map<String, Any>>("profile")
         val network = call.argument<Map<String, Any?>>("network")
         val cameraId = profile?.get("cameraId") as? String
-        if (!cameraId.isNullOrBlank() && cameraId != activeCameraId) {
+        val captureMap = profile?.get("capture") as? Map<*, *>
+        val captureW = (captureMap?.get("width") as? Number)?.toInt()
+        val captureH = (captureMap?.get("height") as? Number)?.toInt()
+
+        val cameraChanged = !cameraId.isNullOrBlank() && cameraId != activeCameraId
+        val captureChanged = (captureW != null && captureW != pipeline.captureWidth) ||
+            (captureH != null && captureH != pipeline.captureHeight)
+
+        if (cameraChanged || captureChanged) {
             pipeline.stopAll()
-            activeCameraId = cameraId
+            if (!cameraId.isNullOrBlank()) activeCameraId = cameraId
             pipeline.startPreview(
-                cameraId = cameraId,
+                cameraId = activeCameraId,
                 previewWidth = PREVIEW_WIDTH,
                 previewHeight = PREVIEW_HEIGHT,
+                captureWidth = captureW,
+                captureHeight = captureH,
                 onError = { msg -> Log.w(TAG, "preview error: $msg") },
             )
         }
@@ -132,13 +143,14 @@ class FlutterBridge(
         val hPub = if (obsHost.isNotEmpty()) UdpPublisher(obsHost, hPort, "H") else null
         val vPub = if (obsHost.isNotEmpty()) UdpPublisher(obsHost, vPort, "V") else null
 
+        val recordToDisk = (profile?.get("recordToDisk") as? Boolean) ?: false
         startForegroundService()
         val output = pipeline.startRecording(
             horizontalProfile = hProfile,
             verticalProfile = vProfile,
             horizontalPublisher = hPub,
             verticalPublisher = vPub,
-            recordToDisk = true,
+            recordToDisk = recordToDisk,
         ) { msg ->
             handler.post {
                 live = false
@@ -189,14 +201,27 @@ class FlutterBridge(
             if (!statsRunning) return
             val hBps = if (live) pipeline.horizontalBitrate() else 0
             val vBps = if (live) pipeline.verticalBitrate() else 0
+            val hSnap = if (live) pipeline.horizontalPublisherSnapshot() else null
+            val vSnap = if (live) pipeline.verticalPublisherSnapshot() else null
+            val thermal = currentThermalStatus()
+            if (thermal != lastThermalLogged) {
+                Log.i(TAG, "thermalStatus: $lastThermalLogged -> $thermal")
+                lastThermalLogged = thermal
+            }
             val payload = mapOf<String, Any>(
                 "bitrateA" to hBps,
                 "bitrateB" to vBps,
                 "fps" to if (live) 30.0 else 0.0,
                 "droppedFrames" to 0,
-                "thermalStatus" to currentThermalStatus(),
+                "thermalStatus" to thermal,
                 "srtRtt" to 0.0,
                 "srtLoss" to 0.0,
+                "txDatagramsA" to (hSnap?.datagrams ?: 0L),
+                "txBytesA" to (hSnap?.bytes ?: 0L),
+                "txErrorsA" to (hSnap?.errors ?: 0L),
+                "txDatagramsB" to (vSnap?.datagrams ?: 0L),
+                "txBytesB" to (vSnap?.bytes ?: 0L),
+                "txErrorsB" to (vSnap?.errors ?: 0L),
                 "timestampMs" to System.currentTimeMillis(),
             )
             eventSink?.success(payload)
