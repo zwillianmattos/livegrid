@@ -144,11 +144,14 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let hFps = (hMap["fps"] as? Int) ?? 30
         let hBps = (hMap["bitrateBps"] as? Int) ?? 6_000_000
         let hGop = (hMap["gop"] as? Int) ?? hFps
-        let vW = (vMap["width"] as? Int) ?? 1080
-        let vH = (vMap["height"] as? Int) ?? 1920
         let vFps = (vMap["fps"] as? Int) ?? 30
         let vBps = (vMap["bitrateBps"] as? Int) ?? 5_000_000
         let vGop = (vMap["gop"] as? Int) ?? vFps
+
+        let sourceH = captureH ?? 1080
+        var vCropW = (sourceH * 9) / 16
+        if vCropW % 2 != 0 { vCropW -= 1 }
+        let vCropH = sourceH
 
         let obsHost = ((network?["obsHost"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
         let hPort = (network?["horizontalPort"] as? Int) ?? 9000
@@ -162,7 +165,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         verticalPublisher = vPub
 
         let hEnc = VideoEncoder(width: hW, height: hH, fps: hFps, gop: hGop, bitrate: hBps, label: "H")
-        let vEnc = VideoEncoder(width: vW, height: vH, fps: vFps, gop: vGop, bitrate: vBps, label: "V")
+        let vEnc = VideoEncoder(width: vCropW, height: vCropH, fps: vFps, gop: vGop, bitrate: vBps, label: "V")
 
         hEnc.onEncoded = { [weak self] f in
             self?.horizontalPublisher?.publish(annexB: f.data, ptsUs: f.ptsUs, isKeyframe: f.isKeyframe)
@@ -188,7 +191,12 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         }
         horizontalEncoder = hEnc
         verticalEncoder = vEnc
-        preview?.setEncoders(horizontal: hEnc, vertical: vEnc)
+        preview?.setEncoders(
+            horizontal: hEnc,
+            vertical: vEnc,
+            verticalCropWidth: vCropW,
+            verticalCropHeight: vCropH,
+        )
 
         isLive = true
         var payload: [String: Any] = [:]

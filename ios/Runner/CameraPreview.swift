@@ -1,5 +1,4 @@
 import AVFoundation
-import CoreImage
 import CoreVideo
 import Flutter
 import Foundation
@@ -16,7 +15,8 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     private var horizontalEncoder: VideoEncoder?
     private var verticalEncoder: VideoEncoder?
     private var verticalPool: CVPixelBufferPool?
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var verticalCropWidth: Int = 0
+    private var verticalCropHeight: Int = 0
     private var verticalCropCenterX: CGFloat = 0.5
 
     func setVerticalCropCenter(_ value: CGFloat) {
@@ -35,12 +35,19 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         textureId = registry.register(self)
     }
 
-    func setEncoders(horizontal: VideoEncoder?, vertical: VideoEncoder?) {
+    func setEncoders(
+        horizontal: VideoEncoder?,
+        vertical: VideoEncoder?,
+        verticalCropWidth: Int = 0,
+        verticalCropHeight: Int = 0,
+    ) {
         queue.sync {
             horizontalEncoder = horizontal
             verticalEncoder = vertical
-            if vertical != nil {
-                verticalPool = makePool(width: VERTICAL_WIDTH, height: VERTICAL_HEIGHT)
+            self.verticalCropWidth = verticalCropWidth
+            self.verticalCropHeight = verticalCropHeight
+            if vertical != nil, verticalCropWidth > 0, verticalCropHeight > 0 {
+                verticalPool = makePool(width: verticalCropWidth, height: verticalCropHeight)
             } else {
                 verticalPool = nil
             }
@@ -148,27 +155,44 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     }
 
     private func makeVerticalCrop(source: CVPixelBuffer, pool: CVPixelBufferPool) -> CVPixelBuffer? {
+        let cropW = verticalCropWidth
+        let cropH = verticalCropHeight
+        guard cropW > 0, cropH > 0 else { return nil }
+
         var dest: CVPixelBuffer?
-        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &dest)
-        guard status == kCVReturnSuccess, let dst = dest else { return nil }
+        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &dest) == kCVReturnSuccess,
+              let dst = dest else { return nil }
 
-        let sw = CGFloat(CVPixelBufferGetWidth(source))
-        let sh = CGFloat(CVPixelBufferGetHeight(source))
-        let targetAspect: CGFloat = CGFloat(VERTICAL_WIDTH) / CGFloat(VERTICAL_HEIGHT)
-        let cropWidth = sh * targetAspect
-        let cropHeight = sh
-        let maxLeft = max(0, sw - cropWidth)
-        let desiredLeft = verticalCropCenterX * sw - cropWidth / 2.0
+        let srcW = CVPixelBufferGetWidth(source)
+        let srcH = CVPixelBufferGetHeight(source)
+        let effectiveCropW = min(cropW, srcW)
+        let effectiveCropH = min(cropH, srcH)
+
+        let maxLeft = srcW - effectiveCropW
+        let desiredLeft = Int((verticalCropCenterX * CGFloat(srcW)).rounded()) - effectiveCropW / 2
         let cropX = min(max(0, desiredLeft), maxLeft)
-        let cropY: CGFloat = 0
 
-        var ci = CIImage(cvPixelBuffer: source)
-        ci = ci.cropped(to: CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight))
-            .transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
-        let scale = CGFloat(VERTICAL_HEIGHT) / cropHeight
-        ci = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(dst, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(dst, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
 
-        ciContext.render(ci, to: dst)
+        guard let srcBase = CVPixelBufferGetBaseAddress(source),
+              let dstBase = CVPixelBufferGetBaseAddress(dst) else { return nil }
+
+        let srcStride = CVPixelBufferGetBytesPerRow(source)
+        let dstStride = CVPixelBufferGetBytesPerRow(dst)
+        let copyBytes = effectiveCropW * 4
+
+        for row in 0..<effectiveCropH {
+            memcpy(
+                dstBase.advanced(by: row * dstStride),
+                srcBase.advanced(by: row * srcStride + cropX * 4),
+                copyBytes,
+            )
+        }
         return dst
     }
 
@@ -233,6 +257,4 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             ?? AVCaptureDevice.default(for: .video)
     }
 
-    private let VERTICAL_WIDTH = 1080
-    private let VERTICAL_HEIGHT = 1920
 }
