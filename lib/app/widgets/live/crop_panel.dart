@@ -168,8 +168,8 @@ class _PanelAction extends StatelessWidget {
               color: primary
                   ? Colors.black
                   : enabled
-                      ? AppColors.text
-                      : AppColors.textFaint,
+                  ? AppColors.text
+                  : AppColors.textFaint,
             ),
           ),
         ),

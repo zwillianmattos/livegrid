@@ -27,26 +27,25 @@ class NetworkProfile {
     bool? tsbpd,
     bool? tlpktdrop,
     String? rtmpFallbackUrl,
-  }) =>
-      NetworkProfile(
-        obsHost: obsHost ?? this.obsHost,
-        horizontalPort: horizontalPort ?? this.horizontalPort,
-        verticalPort: verticalPort ?? this.verticalPort,
-        srtLatencyMs: srtLatencyMs ?? this.srtLatencyMs,
-        tsbpd: tsbpd ?? this.tsbpd,
-        tlpktdrop: tlpktdrop ?? this.tlpktdrop,
-        rtmpFallbackUrl: rtmpFallbackUrl ?? this.rtmpFallbackUrl,
-      );
+  }) => NetworkProfile(
+    obsHost: obsHost ?? this.obsHost,
+    horizontalPort: horizontalPort ?? this.horizontalPort,
+    verticalPort: verticalPort ?? this.verticalPort,
+    srtLatencyMs: srtLatencyMs ?? this.srtLatencyMs,
+    tsbpd: tsbpd ?? this.tsbpd,
+    tlpktdrop: tlpktdrop ?? this.tlpktdrop,
+    rtmpFallbackUrl: rtmpFallbackUrl ?? this.rtmpFallbackUrl,
+  );
 
   Map<String, Object?> toMap() => {
-        'obsHost': obsHost,
-        'horizontalPort': horizontalPort,
-        'verticalPort': verticalPort,
-        'srtLatencyMs': srtLatencyMs,
-        'tsbpd': tsbpd,
-        'tlpktdrop': tlpktdrop,
-        'rtmpFallbackUrl': rtmpFallbackUrl,
-      };
+    'obsHost': obsHost,
+    'horizontalPort': horizontalPort,
+    'verticalPort': verticalPort,
+    'srtLatencyMs': srtLatencyMs,
+    'tsbpd': tsbpd,
+    'tlpktdrop': tlpktdrop,
+    'rtmpFallbackUrl': rtmpFallbackUrl,
+  };
 }
 
 enum WifiBand { unknown, band24GHz, band5GHz }

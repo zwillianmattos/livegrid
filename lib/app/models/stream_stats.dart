@@ -56,8 +56,9 @@ class StreamStats {
       bitrateBBps: (map['bitrateB'] as num?)?.toInt() ?? 0,
       fps: (map['fps'] as num?)?.toDouble() ?? 0,
       droppedFrames: (map['droppedFrames'] as num?)?.toInt() ?? 0,
-      thermalStatus:
-          ThermalStatus.fromCode((map['thermalStatus'] as num?)?.toInt()),
+      thermalStatus: ThermalStatus.fromCode(
+        (map['thermalStatus'] as num?)?.toInt(),
+      ),
       srtRttMs: (map['srtRtt'] as num?)?.toDouble() ?? 0,
       srtLossPct: (map['srtLoss'] as num?)?.toDouble() ?? 0,
       txDatagramsA: (map['txDatagramsA'] as num?)?.toInt() ?? 0,

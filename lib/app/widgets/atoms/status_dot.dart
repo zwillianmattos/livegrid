@@ -62,8 +62,7 @@ class _StatusDotState extends State<StatusDot>
             boxShadow: widget.pulsing
                 ? [
                     BoxShadow(
-                      color: widget.color
-                          .withValues(alpha: 0.4 * _ctrl.value),
+                      color: widget.color.withValues(alpha: 0.4 * _ctrl.value),
                       blurRadius: 6,
                       spreadRadius: 1,
                     ),

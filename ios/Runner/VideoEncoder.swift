@@ -5,6 +5,18 @@ import VideoToolbox
 
 final class VideoEncoder {
 
+    enum ProfileLevel {
+        case baseline
+        case main
+
+        var key: CFString {
+            switch self {
+            case .baseline: return kVTProfileLevel_H264_Baseline_AutoLevel
+            case .main: return kVTProfileLevel_H264_Main_AutoLevel
+            }
+        }
+    }
+
     struct EncodedFrame {
         let data: Data
         let ptsUs: Int64
@@ -16,18 +28,30 @@ final class VideoEncoder {
 
     private let width: Int32
     private let height: Int32
-    private let fps: Int
+    private var fps: Int
     private let gop: Int
     private var bitrate: Int
+    private let profileLevel: ProfileLevel
     private let label: String
     private var session: VTCompressionSession?
+    private var forceKeyframeNext = false
+    private let keyframeLock = NSLock()
 
-    init(width: Int, height: Int, fps: Int, gop: Int, bitrate: Int, label: String) {
+    init(
+        width: Int,
+        height: Int,
+        fps: Int,
+        gop: Int,
+        bitrate: Int,
+        label: String,
+        profileLevel: ProfileLevel = .main
+    ) {
         self.width = Int32(width)
         self.height = Int32(height)
         self.fps = fps
         self.gop = gop
         self.bitrate = bitrate
+        self.profileLevel = profileLevel
         self.label = label
     }
 
@@ -52,46 +76,66 @@ final class VideoEncoder {
 
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Main_AutoLevel)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: profileLevel.key)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: bitrate))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: gop))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: NSNumber(value: 1.0))
-        let dataLimit = NSArray(array: [NSNumber(value: bitrate / 8), NSNumber(value: 1.0)])
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: dataLimit)
 
         VTCompressionSessionPrepareToEncodeFrames(session)
     }
 
     func encode(pixelBuffer: CVPixelBuffer, pts: CMTime) {
         guard let session = session else { return }
-        VTCompressionSessionEncodeFrame(
+
+        keyframeLock.lock()
+        let force = forceKeyframeNext
+        forceKeyframeNext = false
+        keyframeLock.unlock()
+
+        let props: CFDictionary? = force
+            ? [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue!] as CFDictionary
+            : nil
+
+        let label = self.label
+        let submitStatus = VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: pixelBuffer,
             presentationTimeStamp: pts,
             duration: .invalid,
-            frameProperties: nil,
+            frameProperties: props,
             infoFlagsOut: nil,
             outputHandler: { [weak self] status, _, sampleBuffer in
-                guard status == noErr, let sb = sampleBuffer else { return }
+                if status != noErr {
+                    NSLog("encoder[\(label)] output status=\(status)")
+                    return
+                }
+                guard let sb = sampleBuffer else { return }
                 self?.handleOutput(sb)
             }
         )
+        if submitStatus != noErr {
+            NSLog("encoder[\(label)] submit status=\(submitStatus)")
+        }
     }
 
     func setBitrate(_ bps: Int) {
         guard let session = session else { return }
         bitrate = bps
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: bps))
-        let dataLimit = NSArray(array: [NSNumber(value: bps / 8), NSNumber(value: 1.0)])
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: dataLimit)
+    }
+
+    func setFrameRate(_ newFps: Int) {
+        guard let session = session, newFps > 0, newFps != fps else { return }
+        fps = newFps
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: newFps))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: newFps))
     }
 
     func requestKeyframe() {
-        guard let session = session else { return }
-        let props: NSDictionary = [kVTEncodeFrameOptionKey_ForceKeyFrame as String: true]
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: fps))
-        _ = props
+        keyframeLock.lock()
+        forceKeyframeNext = true
+        keyframeLock.unlock()
     }
 
     func stop() {

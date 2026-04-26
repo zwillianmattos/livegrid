@@ -61,10 +61,7 @@ class _QualityBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        border: Border.all(
-          color: color.withValues(alpha: 0.55),
-          width: 0.8,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.55), width: 0.8),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(

@@ -8,11 +8,9 @@ import '../models/resolution_profile.dart';
 import '../models/stream_stats.dart';
 
 class NativeBridge {
-  NativeBridge({
-    MethodChannel? control,
-    EventChannel? stats,
-  })  : _control = control ?? const MethodChannel('livegrid/control'),
-        _stats = stats ?? const EventChannel('livegrid/stats');
+  NativeBridge({MethodChannel? control, EventChannel? stats})
+    : _control = control ?? const MethodChannel('livegrid/control'),
+      _stats = stats ?? const EventChannel('livegrid/stats');
 
   final MethodChannel _control;
   final EventChannel _stats;
@@ -60,16 +58,23 @@ class NativeBridge {
     });
   }
 
+  Future<void> setFrameRate(int fps) async {
+    try {
+      await _control.invokeMethod<void>('setFrameRate', {'fps': fps});
+    } on MissingPluginException {
+      return;
+    }
+  }
+
   Future<void> requestKeyframe() async {
     await _control.invokeMethod<void>('requestKeyframe');
   }
 
   Future<void> setVerticalCrop(double centerX) async {
     try {
-      await _control.invokeMethod<void>(
-        'setVerticalCrop',
-        {'centerX': centerX},
-      );
+      await _control.invokeMethod<void>('setVerticalCrop', {
+        'centerX': centerX,
+      });
     } on MissingPluginException {
       return;
     }

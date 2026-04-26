@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../constants/crop.dart';
@@ -28,7 +26,6 @@ class _LivePageState extends State<LivePage>
   bool _configureMode = false;
   bool _showGrid = false;
   DateTime? _liveStartedAt;
-  Timer? _tick;
   late final AnimationController _modeCtrl;
 
   @override
@@ -47,7 +44,6 @@ class _LivePageState extends State<LivePage>
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
-    _tick?.cancel();
     _modeCtrl.dispose();
     super.dispose();
   }
@@ -57,15 +53,8 @@ class _LivePageState extends State<LivePage>
     final nowLive = widget.controller.isLive;
     if (nowLive && !wasLive) {
       _liveStartedAt = DateTime.now();
-      _tick?.cancel();
-      _tick = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => setState(() {}),
-      );
     } else if (!nowLive && wasLive) {
       _liveStartedAt = null;
-      _tick?.cancel();
-      _tick = null;
     }
     setState(() {});
   }
@@ -84,11 +73,9 @@ class _LivePageState extends State<LivePage>
   void _toggleGrid() => setState(() => _showGrid = !_showGrid);
 
   void _openSettings() {
-    Navigator.of(context).push(
-      fadeRoute(
-        (_) => SettingsPage(controller: widget.controller),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(fadeRoute((_) => SettingsPage(controller: widget.controller)));
   }
 
   @override
@@ -181,9 +168,7 @@ class _LivePageState extends State<LivePage>
                     left: 0,
                     right: 0,
                     bottom: 100,
-                    child: Center(
-                      child: ErrorBubble(message: c.errorMessage!),
-                    ),
+                    child: Center(child: ErrorBubble(message: c.errorMessage!)),
                   ),
               ],
             ),

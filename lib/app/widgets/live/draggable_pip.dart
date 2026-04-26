@@ -29,8 +29,10 @@ class _DraggablePipState extends State<DraggablePip> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final freeH = (constraints.maxHeight - _topInset - _bottomInset)
-            .clamp(140.0, double.infinity);
+        final freeH = (constraints.maxHeight - _topInset - _bottomInset).clamp(
+          140.0,
+          double.infinity,
+        );
         final pipH = freeH.clamp(160.0, 280.0).toDouble();
         final pipW = pipH * 9 / 16;
 

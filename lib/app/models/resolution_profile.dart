@@ -36,6 +36,17 @@ enum VerticalQuality {
   final String description;
 }
 
+enum ChannelMode {
+  both('both', 'Horizontal + Vertical'),
+  horizontalOnly('horizontalOnly', 'Apenas horizontal'),
+  verticalOnly('verticalOnly', 'Apenas vertical');
+
+  const ChannelMode(this.wireValue, this.label);
+
+  final String wireValue;
+  final String label;
+}
+
 class EncoderProfile {
   const EncoderProfile({
     required this.width,
@@ -55,7 +66,7 @@ class EncoderProfile {
     width: 1920,
     height: 1080,
     fps: 30,
-    bitrateBps: 6000000,
+    bitrateBps: 4000000,
     gop: 30,
   );
 
@@ -63,25 +74,25 @@ class EncoderProfile {
     width: 1080,
     height: 1920,
     fps: 30,
-    bitrateBps: 5000000,
+    bitrateBps: 3500000,
     gop: 30,
   );
 
   EncoderProfile copyWith({int? bitrateBps, int? fps}) => EncoderProfile(
-        width: width,
-        height: height,
-        fps: fps ?? this.fps,
-        bitrateBps: bitrateBps ?? this.bitrateBps,
-        gop: gop,
-      );
+    width: width,
+    height: height,
+    fps: fps ?? this.fps,
+    bitrateBps: bitrateBps ?? this.bitrateBps,
+    gop: gop,
+  );
 
   Map<String, Object> toMap() => {
-        'width': width,
-        'height': height,
-        'fps': fps,
-        'bitrateBps': bitrateBps,
-        'gop': gop,
-      };
+    'width': width,
+    'height': height,
+    'fps': fps,
+    'bitrateBps': bitrateBps,
+    'gop': gop,
+  };
 }
 
 class SessionProfile {
@@ -91,6 +102,7 @@ class SessionProfile {
     required this.vertical,
     this.cameraId,
     this.verticalCropCenterX = 0.5,
+    this.channelMode = ChannelMode.both,
   });
 
   final CaptureResolution capture;
@@ -98,11 +110,13 @@ class SessionProfile {
   final EncoderProfile vertical;
   final String? cameraId;
   final double verticalCropCenterX;
+  final ChannelMode channelMode;
 
   static const defaultProfile = SessionProfile(
-    capture: CaptureResolution.uhd3840x2160,
+    capture: CaptureResolution.fhd1920x1080,
     horizontal: EncoderProfile.horizontal1080p,
     vertical: EncoderProfile.vertical1080p,
+    channelMode: ChannelMode.horizontalOnly,
   );
 
   SessionProfile copyWith({
@@ -111,23 +125,22 @@ class SessionProfile {
     EncoderProfile? vertical,
     String? cameraId,
     double? verticalCropCenterX,
-  }) =>
-      SessionProfile(
-        capture: capture ?? this.capture,
-        horizontal: horizontal ?? this.horizontal,
-        vertical: vertical ?? this.vertical,
-        cameraId: cameraId ?? this.cameraId,
-        verticalCropCenterX: verticalCropCenterX ?? this.verticalCropCenterX,
-      );
+    ChannelMode? channelMode,
+  }) => SessionProfile(
+    capture: capture ?? this.capture,
+    horizontal: horizontal ?? this.horizontal,
+    vertical: vertical ?? this.vertical,
+    cameraId: cameraId ?? this.cameraId,
+    verticalCropCenterX: verticalCropCenterX ?? this.verticalCropCenterX,
+    channelMode: channelMode ?? this.channelMode,
+  );
 
   Map<String, Object?> toMap() => {
-        'capture': {
-          'width': capture.width,
-          'height': capture.height,
-        },
-        'horizontal': horizontal.toMap(),
-        'vertical': vertical.toMap(),
-        'cameraId': cameraId,
-        'verticalCropCenterX': verticalCropCenterX,
-      };
+    'capture': {'width': capture.width, 'height': capture.height},
+    'horizontal': horizontal.toMap(),
+    'vertical': vertical.toMap(),
+    'cameraId': cameraId,
+    'verticalCropCenterX': verticalCropCenterX,
+    'channelMode': channelMode.wireValue,
+  };
 }

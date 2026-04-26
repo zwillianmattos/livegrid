@@ -32,7 +32,7 @@ void main() {
       expect(m['width'], 1080);
       expect(m['height'], 1920);
       expect(m['fps'], 30);
-      expect(m['bitrateBps'], 5000000);
+      expect(m['bitrateBps'], 3500000);
       expect(m['gop'], 30);
     });
   });

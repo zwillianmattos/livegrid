@@ -132,7 +132,7 @@ final class MpegTsMuxer {
             pkt[2] = UInt8(videoPid & 0xFF)
 
             let remaining = pes.count - offset
-            let includePcr = first && isKeyframe
+            let includePcr = first
             var headerLen: Int
             let afSize: Int
             var realChunk: Int
@@ -156,7 +156,9 @@ final class MpegTsMuxer {
                 pkt[i] = UInt8(afSize); i += 1
                 if afSize > 0 {
                     if includePcr {
-                        pkt[i] = 0x50; i += 1
+                        var afFlags: UInt8 = 0x10
+                        if isKeyframe { afFlags |= 0x40 }
+                        pkt[i] = afFlags; i += 1
                         writePcr(&pkt, offset: i, pcr27: pts90 * 300)
                         i += 6
                         let stuffing = afSize - 7

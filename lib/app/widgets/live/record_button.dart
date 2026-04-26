@@ -19,8 +19,7 @@ class RecordButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final busy =
         state == SessionState.starting || state == SessionState.stopping;
-    final live =
-        state == SessionState.live || state == SessionState.degraded;
+    final live = state == SessionState.live || state == SessionState.degraded;
 
     return GestureDetector(
       onTap: busy ? null : (live ? onStop : onStart),

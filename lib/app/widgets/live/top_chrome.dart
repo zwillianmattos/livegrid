@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/network_profile.dart';
@@ -80,36 +82,65 @@ class _StatusPill extends StatelessWidget {
         children: [
           StatusDot(color: color, pulsing: pulsing),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: AppTheme.label(size: 11, color: AppColors.text),
-          ),
+          Text(label, style: AppTheme.label(size: 11, color: AppColors.text)),
           if (liveStartedAt != null) ...[
             const SizedBox(width: 10),
             const SeparatorDot(),
             const SizedBox(width: 10),
-            Text(
-              _formatDuration(DateTime.now().difference(liveStartedAt!)),
-              style: AppTheme.numeric(
-                size: 12,
-                color: AppColors.text,
-                weight: FontWeight.w500,
-              ),
-            ),
+            _LiveDurationText(startedAt: liveStartedAt!),
           ],
         ],
       ),
     );
   }
+}
+
+class _LiveDurationText extends StatefulWidget {
+  const _LiveDurationText({required this.startedAt});
+
+  final DateTime startedAt;
+
+  @override
+  State<_LiveDurationText> createState() => _LiveDurationTextState();
+}
+
+class _LiveDurationTextState extends State<_LiveDurationText> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   static String _two(int v) => v.toString().padLeft(2, '0');
 
-  static String _formatDuration(Duration d) {
+  static String _format(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes.remainder(60);
     final s = d.inSeconds.remainder(60);
     if (h > 0) return '${_two(h)}:${_two(m)}:${_two(s)}';
     return '${_two(m)}:${_two(s)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _format(DateTime.now().difference(widget.startedAt)),
+      style: AppTheme.numeric(
+        size: 12,
+        color: AppColors.text,
+        weight: FontWeight.w500,
+      ),
+    );
   }
 }
 
@@ -194,8 +225,7 @@ class _ThermalCell extends StatelessWidget {
       ThermalStatus.severe => AppColors.warn,
       ThermalStatus.critical ||
       ThermalStatus.emergency ||
-      ThermalStatus.shutdown =>
-        AppColors.live,
+      ThermalStatus.shutdown => AppColors.live,
     };
     return StatusDot(color: color);
   }

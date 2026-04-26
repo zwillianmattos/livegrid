@@ -22,6 +22,7 @@ class _SettingsPageState extends State<SettingsPage>
   late CaptureResolution _capture;
   late int _horizontalKbps;
   late int _verticalKbps;
+  late ChannelMode _channelMode;
   late TextEditingController _obsHostCtrl;
   late TextEditingController _hPortCtrl;
   late TextEditingController _vPortCtrl;
@@ -36,6 +37,7 @@ class _SettingsPageState extends State<SettingsPage>
     _capture = p.capture;
     _horizontalKbps = p.horizontal.bitrateBps ~/ 1000;
     _verticalKbps = p.vertical.bitrateBps ~/ 1000;
+    _channelMode = p.channelMode;
     _obsHostCtrl = TextEditingController(text: n.obsHost);
     _hPortCtrl = TextEditingController(text: '${n.horizontalPort}');
     _vPortCtrl = TextEditingController(text: '${n.verticalPort}');
@@ -217,8 +219,9 @@ class _SettingsPageState extends State<SettingsPage>
         TextField(
           controller: _obsHostCtrl,
           decoration: const InputDecoration(
-            labelText: 'Host OBS',
+            labelText: 'IP do iPhone na LAN',
             hintText: '192.168.1.50',
+            helperText: 'OBS conecta nesse endereço (TCP)',
           ),
           keyboardType: TextInputType.url,
           style: const TextStyle(color: AppColors.text, fontSize: 13),
@@ -261,27 +264,46 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _qualityBody() {
+    final hEnabled = _channelMode != ChannelMode.verticalOnly;
+    final vEnabled = _channelMode != ChannelMode.horizontalOnly;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SliderRow(
-          label: 'Horizontal',
-          value: _horizontalKbps.toDouble(),
-          min: 2000,
-          max: 12000,
-          divisions: 20,
-          display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
-          onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
+        _ChannelModeSelector(
+          value: _channelMode,
+          onChanged: (m) => setState(() => _channelMode = m),
         ),
         const SizedBox(height: 28),
-        SliderRow(
-          label: 'Vertical',
-          value: _verticalKbps.toDouble(),
-          min: 2000,
-          max: 10000,
-          divisions: 16,
-          display: '${(_verticalKbps / 1000).toStringAsFixed(1)} Mbps',
-          onChanged: (v) => setState(() => _verticalKbps = v.toInt()),
+        Opacity(
+          opacity: hEnabled ? 1 : 0.35,
+          child: IgnorePointer(
+            ignoring: !hEnabled,
+            child: SliderRow(
+              label: 'Horizontal',
+              value: _horizontalKbps.toDouble(),
+              min: 2000,
+              max: 12000,
+              divisions: 20,
+              display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
+              onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
+            ),
+          ),
+        ),
+        const SizedBox(height: 28),
+        Opacity(
+          opacity: vEnabled ? 1 : 0.35,
+          child: IgnorePointer(
+            ignoring: !vEnabled,
+            child: SliderRow(
+              label: 'Vertical',
+              value: _verticalKbps.toDouble(),
+              min: 2000,
+              max: 10000,
+              divisions: 16,
+              display: '${(_verticalKbps / 1000).toStringAsFixed(1)} Mbps',
+              onChanged: (v) => setState(() => _verticalKbps = v.toInt()),
+            ),
+          ),
         ),
       ],
     );
@@ -316,6 +338,7 @@ class _SettingsPageState extends State<SettingsPage>
         horizontal: p.horizontal.copyWith(bitrateBps: _horizontalKbps * 1000),
         vertical: p.vertical.copyWith(bitrateBps: _verticalKbps * 1000),
         cameraId: _cameraId,
+        channelMode: _channelMode,
       ),
     );
     widget.controller.updateNetwork(
@@ -392,10 +415,102 @@ class _UrlPreviewBlock extends StatelessWidget {
       ),
       child: Column(
         children: [
-          UrlPreview(label: 'HORIZONTAL', url: 'udp://$host:$hPort'),
+          UrlPreview(label: 'HORIZONTAL', url: 'tcp://$host:$hPort'),
           const SizedBox(height: 6),
-          UrlPreview(label: 'VERTICAL', url: 'udp://$host:$vPort'),
+          UrlPreview(label: 'VERTICAL', url: 'tcp://$host:$vPort'),
         ],
+      ),
+    );
+  }
+}
+
+class _ChannelModeSelector extends StatelessWidget {
+  const _ChannelModeSelector({required this.value, required this.onChanged});
+
+  final ChannelMode value;
+  final ValueChanged<ChannelMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'CANAIS ATIVOS',
+          style: TextStyle(
+            color: AppColors.textFaint,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          decoration: const BoxDecoration(
+            color: AppColors.background,
+            border: Border.fromBorderSide(
+              BorderSide(color: AppColors.hairline),
+            ),
+          ),
+          child: Row(
+            children: [
+              for (final m in ChannelMode.values)
+                Expanded(
+                  child: _ChannelModeOption(
+                    selected: m == value,
+                    label: switch (m) {
+                      ChannelMode.both => 'AMBOS',
+                      ChannelMode.horizontalOnly => 'HORIZONTAL',
+                      ChannelMode.verticalOnly => 'VERTICAL',
+                    },
+                    onTap: () => onChanged(m),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value == ChannelMode.both
+              ? 'Dois encoders em paralelo. Maior consumo térmico.'
+              : 'Um encoder único. Recomendado em iPhone que esquenta.',
+          style: const TextStyle(color: AppColors.textSubtle, fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChannelModeOption extends StatelessWidget {
+  const _ChannelModeOption({
+    required this.selected,
+    required this.label,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.surfaceHigh : Colors.transparent,
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? AppColors.text : AppColors.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.4,
+          ),
+        ),
       ),
     );
   }

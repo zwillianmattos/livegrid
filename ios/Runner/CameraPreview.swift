@@ -26,9 +26,6 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         }
     }
 
-    private var frameIndex: Int64 = 0
-    private let fps: Int32 = 30
-
     init(registry: FlutterTextureRegistry) {
         super.init()
         self.registry = registry
@@ -39,7 +36,7 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         horizontal: VideoEncoder?,
         vertical: VideoEncoder?,
         verticalCropWidth: Int = 0,
-        verticalCropHeight: Int = 0,
+        verticalCropHeight: Int = 0
     ) {
         queue.sync {
             horizontalEncoder = horizontal
@@ -47,7 +44,7 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             self.verticalCropWidth = verticalCropWidth
             self.verticalCropHeight = verticalCropHeight
             if vertical != nil, verticalCropWidth > 0, verticalCropHeight > 0 {
-                verticalPool = makePool(width: verticalCropWidth, height: verticalCropHeight)
+                verticalPool = makeNV12Pool(width: verticalCropWidth, height: verticalCropHeight)
             } else {
                 verticalPool = nil
             }
@@ -84,7 +81,9 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
 
             let output = AVCaptureVideoDataOutput()
             output.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
             ]
             output.alwaysDiscardsLateVideoFrames = true
             output.setSampleBufferDelegate(self, queue: queue)
@@ -96,6 +95,9 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
                 }
                 if device.position == .front, connection.isVideoMirroringSupported {
                     connection.isVideoMirrored = true
+                }
+                if connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = .off
                 }
             }
 
@@ -128,13 +130,13 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         from connection: AVCaptureConnection
     ) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
         bufferLock.lock()
         latestBuffer = pixelBuffer
         bufferLock.unlock()
         registry?.textureFrameAvailable(textureId)
 
-        frameIndex += 1
-        let pts = CMTime(value: frameIndex, timescale: fps)
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
         if let enc = horizontalEncoder {
             enc.encode(pixelBuffer: pixelBuffer, pts: pts)
@@ -160,17 +162,25 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         guard cropW > 0, cropH > 0 else { return nil }
 
         var dest: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &dest) == kCVReturnSuccess,
-              let dst = dest else { return nil }
+        let poolStatus = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &dest)
+        guard poolStatus == kCVReturnSuccess, let dst = dest else {
+            NSLog("vertical pool exhausted status=\(poolStatus)")
+            return nil
+        }
 
         let srcW = CVPixelBufferGetWidth(source)
         let srcH = CVPixelBufferGetHeight(source)
-        let effectiveCropW = min(cropW, srcW)
-        let effectiveCropH = min(cropH, srcH)
+        var effectiveCropW = min(cropW, srcW)
+        var effectiveCropH = min(cropH, srcH)
+        if effectiveCropW % 2 != 0 { effectiveCropW -= 1 }
+        if effectiveCropH % 2 != 0 { effectiveCropH -= 1 }
+        guard effectiveCropW > 0, effectiveCropH > 0 else { return nil }
 
         let maxLeft = srcW - effectiveCropW
-        let desiredLeft = Int((verticalCropCenterX * CGFloat(srcW)).rounded()) - effectiveCropW / 2
-        let cropX = min(max(0, desiredLeft), maxLeft)
+        var desiredLeft = Int((verticalCropCenterX * CGFloat(srcW)).rounded()) - effectiveCropW / 2
+        if desiredLeft % 2 != 0 { desiredLeft -= 1 }
+        let cropX = min(max(0, desiredLeft), maxLeft - (maxLeft % 2))
+        let cropY = ((srcH - effectiveCropH) / 2) & ~1
 
         CVPixelBufferLockBaseAddress(source, .readOnly)
         CVPixelBufferLockBaseAddress(dst, [])
@@ -179,26 +189,46 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             CVPixelBufferUnlockBaseAddress(source, .readOnly)
         }
 
-        guard let srcBase = CVPixelBufferGetBaseAddress(source),
-              let dstBase = CVPixelBufferGetBaseAddress(dst) else { return nil }
+        guard let srcY = CVPixelBufferGetBaseAddressOfPlane(source, 0),
+              let srcUV = CVPixelBufferGetBaseAddressOfPlane(source, 1),
+              let dstY = CVPixelBufferGetBaseAddressOfPlane(dst, 0),
+              let dstUV = CVPixelBufferGetBaseAddressOfPlane(dst, 1) else { return nil }
 
-        let srcStride = CVPixelBufferGetBytesPerRow(source)
-        let dstStride = CVPixelBufferGetBytesPerRow(dst)
-        let copyBytes = effectiveCropW * 4
+        let srcYStride = CVPixelBufferGetBytesPerRowOfPlane(source, 0)
+        let srcUVStride = CVPixelBufferGetBytesPerRowOfPlane(source, 1)
+        let dstYStride = CVPixelBufferGetBytesPerRowOfPlane(dst, 0)
+        let dstUVStride = CVPixelBufferGetBytesPerRowOfPlane(dst, 1)
 
         for row in 0..<effectiveCropH {
             memcpy(
-                dstBase.advanced(by: row * dstStride),
-                srcBase.advanced(by: row * srcStride + cropX * 4),
-                copyBytes,
+                dstY.advanced(by: row * dstYStride),
+                srcY.advanced(by: (cropY + row) * srcYStride + cropX),
+                effectiveCropW
             )
         }
+
+        let chromaRows = effectiveCropH / 2
+        let chromaCopyBytes = effectiveCropW
+        let chromaSrcXBytes = cropX
+        let chromaSrcYRow = cropY / 2
+        for row in 0..<chromaRows {
+            memcpy(
+                dstUV.advanced(by: row * dstUVStride),
+                srcUV.advanced(by: (chromaSrcYRow + row) * srcUVStride + chromaSrcXBytes),
+                chromaCopyBytes
+            )
+        }
+
+        CVBufferSetAttachment(dst, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(dst, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(dst, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
         return dst
     }
 
-    private func makePool(width: Int, height: Int) -> CVPixelBufferPool? {
+    private func makeNV12Pool(width: Int, height: Int) -> CVPixelBufferPool? {
         let attrs: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferPixelFormatTypeKey as String:
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),

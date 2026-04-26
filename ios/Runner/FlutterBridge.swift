@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Flutter
 import Foundation
 import UIKit
@@ -17,9 +18,10 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
 
     private var horizontalEncoder: VideoEncoder?
     private var verticalEncoder: VideoEncoder?
-    private var horizontalPublisher: UdpPublisher?
-    private var verticalPublisher: UdpPublisher?
+    private var horizontalPublisher: TcpPublisher?
+    private var verticalPublisher: TcpPublisher?
 
+    private var currentFps: Int = 30
     private var hBytesWindow: Int = 0
     private var vBytesWindow: Int = 0
     private let byteLock = NSLock()
@@ -65,6 +67,13 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             if let args = call.arguments as? [String: Any] {
                 if let h = args["horizontalBps"] as? Int { horizontalEncoder?.setBitrate(h) }
                 if let v = args["verticalBps"] as? Int { verticalEncoder?.setBitrate(v) }
+            }
+            result(nil)
+        case "setFrameRate":
+            if let args = call.arguments as? [String: Any], let f = args["fps"] as? Int {
+                currentFps = f
+                horizontalEncoder?.setFrameRate(f)
+                verticalEncoder?.setFrameRate(f)
             }
             result(nil)
         case "requestKeyframe":
@@ -137,6 +146,10 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             return
         }
 
+        let channelMode = (profile["channelMode"] as? String) ?? "both"
+        let wantsHorizontal = channelMode != "verticalOnly"
+        let wantsVertical = channelMode != "horizontalOnly"
+
         let cropCenterX = (profile["verticalCropCenterX"] as? Double) ?? 0.5
         preview?.setVerticalCropCenter(CGFloat(cropCenterX))
         let hW = (hMap["width"] as? Int) ?? 1920
@@ -147,6 +160,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let vFps = (vMap["fps"] as? Int) ?? 30
         let vBps = (vMap["bitrateBps"] as? Int) ?? 5_000_000
         let vGop = (vMap["gop"] as? Int) ?? vFps
+        currentFps = hFps
 
         let sourceH = captureH ?? 1080
         var vCropW = (sourceH * 9) / 16
@@ -157,32 +171,36 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let hPort = (network?["horizontalPort"] as? Int) ?? 9000
         let vPort = (network?["verticalPort"] as? Int) ?? 9001
 
-        let hPub = obsHost.isEmpty ? nil : UdpPublisher(host: obsHost, port: hPort, label: "H")
-        let vPub = obsHost.isEmpty ? nil : UdpPublisher(host: obsHost, port: vPort, label: "V")
+        let hPub = wantsHorizontal ? TcpPublisher(port: hPort, label: "H") : nil
+        let vPub = wantsVertical ? TcpPublisher(port: vPort, label: "V") : nil
         hPub?.open()
         vPub?.open()
         horizontalPublisher = hPub
         verticalPublisher = vPub
 
-        let hEnc = VideoEncoder(width: hW, height: hH, fps: hFps, gop: hGop, bitrate: hBps, label: "H")
-        let vEnc = VideoEncoder(width: vCropW, height: vCropH, fps: vFps, gop: vGop, bitrate: vBps, label: "V")
+        let hEnc = wantsHorizontal
+            ? VideoEncoder(width: hW, height: hH, fps: hFps, gop: hGop, bitrate: hBps, label: "H", profileLevel: .baseline)
+            : nil
+        let vEnc = wantsVertical
+            ? VideoEncoder(width: vCropW, height: vCropH, fps: vFps, gop: vGop, bitrate: vBps, label: "V", profileLevel: .baseline)
+            : nil
 
-        hEnc.onEncoded = { [weak self] f in
+        hEnc?.onEncoded = { [weak self] f in
             self?.horizontalPublisher?.publish(annexB: f.data, ptsUs: f.ptsUs, isKeyframe: f.isKeyframe)
         }
-        hEnc.onBytes = { [weak self] n in
+        hEnc?.onBytes = { [weak self] n in
             self?.byteLock.lock(); self?.hBytesWindow += n; self?.byteLock.unlock()
         }
-        vEnc.onEncoded = { [weak self] f in
+        vEnc?.onEncoded = { [weak self] f in
             self?.verticalPublisher?.publish(annexB: f.data, ptsUs: f.ptsUs, isKeyframe: f.isKeyframe)
         }
-        vEnc.onBytes = { [weak self] n in
+        vEnc?.onBytes = { [weak self] n in
             self?.byteLock.lock(); self?.vBytesWindow += n; self?.byteLock.unlock()
         }
 
         do {
-            try hEnc.start()
-            try vEnc.start()
+            try hEnc?.start()
+            try vEnc?.start()
         } catch {
             hPub?.close(); vPub?.close()
             horizontalPublisher = nil; verticalPublisher = nil
@@ -194,16 +212,22 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         preview?.setEncoders(
             horizontal: hEnc,
             vertical: vEnc,
-            verticalCropWidth: vCropW,
-            verticalCropHeight: vCropH,
+            verticalCropWidth: wantsVertical ? vCropW : 0,
+            verticalCropHeight: wantsVertical ? vCropH : 0
         )
 
         isLive = true
         var payload: [String: Any] = [:]
+        let displayHost: String
         if !obsHost.isEmpty {
-            payload["horizontalUrl"] = "udp://\(obsHost):\(hPort)"
-            payload["verticalUrl"] = "udp://\(obsHost):\(vPort)"
+            displayHost = obsHost
+        } else if let ip = Self.localWifiIp() {
+            displayHost = ip
+        } else {
+            displayHost = "<IP_DO_IPHONE>"
         }
+        if wantsHorizontal { payload["horizontalUrl"] = "tcp://\(displayHost):\(hPort)" }
+        if wantsVertical { payload["verticalUrl"] = "tcp://\(displayHost):\(vPort)" }
         result(payload)
     }
 
@@ -261,7 +285,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let payload: [String: Any] = [
             "bitrateA": isLive ? hBps : 0,
             "bitrateB": isLive ? vBps : 0,
-            "fps": isLive ? 30.0 : 0.0,
+            "fps": isLive ? Double(currentFps) : 0.0,
             "droppedFrames": 0,
             "thermalStatus": currentThermalStatus(),
             "srtRtt": 0.0,
@@ -284,5 +308,41 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
     private func defaultBackCameraId() -> String? {
         return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)?.uniqueID
             ?? AVCaptureDevice.default(for: .video)?.uniqueID
+    }
+
+    private static func localWifiIp() -> String? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+
+        let preferred = ["en0", "en1"]
+        var fallback: String?
+        var node: UnsafeMutablePointer<ifaddrs>? = first
+        while let cur = node {
+            defer { node = cur.pointee.ifa_next }
+            guard let saPtr = cur.pointee.ifa_addr else { continue }
+            let family = saPtr.pointee.sa_family
+            guard family == sa_family_t(AF_INET) else { continue }
+
+            let flags = Int32(cur.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0 else { continue }
+
+            let name = String(cString: cur.pointee.ifa_name)
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let result = getnameinfo(
+                saPtr,
+                socklen_t(saPtr.pointee.sa_len),
+                &host,
+                socklen_t(host.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            guard result == 0 else { continue }
+            let ip = String(cString: host)
+            if preferred.contains(name) { return ip }
+            if fallback == nil { fallback = ip }
+        }
+        return fallback
     }
 }

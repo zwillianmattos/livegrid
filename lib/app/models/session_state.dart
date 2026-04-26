@@ -1,8 +1,1 @@
-enum SessionState {
-  idle,
-  starting,
-  live,
-  degraded,
-  stopping,
-  error,
-}
+enum SessionState { idle, starting, live, degraded, stopping, error }

@@ -20,9 +20,7 @@ void main() {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
-  SystemChrome.setEnabledSystemUIMode(
-    SystemUiMode.immersiveSticky,
-  );
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   runApp(const LiveGridApp());
 }
 

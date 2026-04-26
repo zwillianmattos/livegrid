@@ -16,8 +16,8 @@ typedef PermissionGate = Future<bool> Function();
 
 class SessionController extends ChangeNotifier {
   SessionController({NativeBridge? bridge, PermissionGate? permissionGate})
-      : _bridge = bridge ?? NativeBridge(),
-        _permissionGate = permissionGate ?? _defaultPermissionGate;
+    : _bridge = bridge ?? NativeBridge(),
+      _permissionGate = permissionGate ?? _defaultPermissionGate;
 
   final NativeBridge _bridge;
   final PermissionGate _permissionGate;
@@ -67,7 +67,10 @@ class SessionController extends ChangeNotifier {
         );
         _profile = _profile.copyWith(cameraId: back.id);
       }
-      _statsSub ??= _bridge.statsStream.listen(_onStats, onError: _onStatsError);
+      _statsSub ??= _bridge.statsStream.listen(
+        _onStats,
+        onError: _onStatsError,
+      );
       notifyListeners();
     } catch (e) {
       _setError('init failed: $e');
@@ -178,32 +181,36 @@ class SessionController extends ChangeNotifier {
 
     final hBase = _profile.horizontal.bitrateBps;
     final vBase = _profile.vertical.bitrateBps;
+    final fpsBase = _profile.horizontal.fps;
 
     switch (status) {
       case ThermalStatus.none:
       case ThermalStatus.light:
         _state = SessionState.live;
+        await _bridge.setFrameRate(fpsBase);
         await _bridge.setBitrate(horizontalBps: hBase, verticalBps: vBase);
         break;
       case ThermalStatus.moderate:
-        _state = SessionState.degraded;
+        _state = SessionState.live;
+        await _bridge.setFrameRate(fpsBase);
         await _bridge.setBitrate(
-          horizontalBps: (hBase * 0.70).toInt(),
-          verticalBps: vBase,
+          horizontalBps: (hBase * 0.90).toInt(),
+          verticalBps: (vBase * 0.90).toInt(),
         );
         break;
       case ThermalStatus.severe:
         _state = SessionState.degraded;
+        await _bridge.setFrameRate(24);
         await _bridge.setBitrate(
-          horizontalBps: (hBase * 0.55).toInt(),
-          verticalBps: (vBase * 0.85).toInt(),
+          horizontalBps: (hBase * 0.75).toInt(),
+          verticalBps: (vBase * 0.75).toInt(),
         );
-        await _bridge.switchResolution(CaptureResolution.fhd2880x2160);
         break;
       case ThermalStatus.critical:
         _state = SessionState.degraded;
+        await _bridge.setFrameRate(24);
         await _bridge.setBitrate(
-          horizontalBps: 4000000,
+          horizontalBps: (hBase * 0.60).toInt(),
           verticalBps: 0,
         );
         break;

@@ -48,9 +48,7 @@ class FullscreenPreview extends StatelessWidget {
                     opacity: showGrid ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOut,
-                    child: const CustomPaint(
-                      painter: _RuleOfThirdsPainter(),
-                    ),
+                    child: const CustomPaint(painter: _RuleOfThirdsPainter()),
                   ),
                 ),
                 AnimatedBuilder(
@@ -83,8 +81,7 @@ class FullscreenPreview extends StatelessWidget {
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragUpdate: (d) {
-                        final newRatio =
-                            (cropCenterX + d.delta.dx / w).clamp(
+                        final newRatio = (cropCenterX + d.delta.dx / w).clamp(
                           kHalfCropRatio,
                           1.0 - kHalfCropRatio,
                         );
@@ -152,16 +149,8 @@ class _CropCornersPainter extends CustomPainter {
     canvas.drawLine(Offset(width, 0), Offset(width, _len), paint);
     canvas.drawLine(Offset(0, height), Offset(_len, height), paint);
     canvas.drawLine(Offset(0, height - _len), Offset(0, height), paint);
-    canvas.drawLine(
-      Offset(width - _len, height),
-      Offset(width, height),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(width, height - _len),
-      Offset(width, height),
-      paint,
-    );
+    canvas.drawLine(Offset(width - _len, height), Offset(width, height), paint);
+    canvas.drawLine(Offset(width, height - _len), Offset(width, height), paint);
   }
 
   @override

@@ -112,9 +112,7 @@ class AppTheme {
           foregroundColor: AppColors.background,
           minimumSize: const Size(0, 40),
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.zero,
-          ),
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
           textStyle: const TextStyle(
             fontWeight: FontWeight.w700,
             fontSize: 11,
@@ -125,9 +123,7 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: AppColors.textMuted,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.zero,
-          ),
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
           textStyle: const TextStyle(
             fontWeight: FontWeight.w700,
             fontSize: 11,
@@ -163,23 +159,21 @@ class AppTheme {
     double size = 12,
     Color color = AppColors.text,
     FontWeight weight = FontWeight.w600,
-  }) =>
-      TextStyle(
-        color: color,
-        fontSize: size,
-        fontWeight: weight,
-        fontFeatures: const [FontFeature.tabularFigures()],
-        letterSpacing: 0.2,
-      );
+  }) => TextStyle(
+    color: color,
+    fontSize: size,
+    fontWeight: weight,
+    fontFeatures: const [FontFeature.tabularFigures()],
+    letterSpacing: 0.2,
+  );
 
   static TextStyle label({
     double size = 10,
     Color color = AppColors.textSubtle,
-  }) =>
-      TextStyle(
-        color: color,
-        fontSize: size,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 1.5,
-      );
+  }) => TextStyle(
+    color: color,
+    fontSize: size,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 1.5,
+  );
 }

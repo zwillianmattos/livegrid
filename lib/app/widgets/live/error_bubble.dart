@@ -29,11 +29,7 @@ class ErrorBubble extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.error_outline,
-                color: AppColors.live,
-                size: 16,
-              ),
+              const Icon(Icons.error_outline, color: AppColors.live, size: 16),
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
