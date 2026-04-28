@@ -30,12 +30,13 @@ class _FakeBridge extends NativeBridge {
   }
 
   @override
-  Future<void> startCapture({
+  Future<CaptureStartInfo> startCapture({
     required SessionProfile profile,
     required NetworkProfile network,
   }) async {
     calls.add('start');
     if (nextStartError != null) throw nextStartError!;
+    return const CaptureStartInfo();
   }
 
   @override

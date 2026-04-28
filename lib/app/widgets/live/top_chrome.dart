@@ -19,8 +19,8 @@ class TopChrome extends StatelessWidget {
     required this.stats,
     required this.wifiBand,
     required this.liveStartedAt,
-    required this.configure,
-    required this.onConfigure,
+    this.configure = false,
+    this.onConfigure,
     required this.onSettings,
   });
 
@@ -29,7 +29,7 @@ class TopChrome extends StatelessWidget {
   final WifiBand wifiBand;
   final DateTime? liveStartedAt;
   final bool configure;
-  final VoidCallback onConfigure;
+  final VoidCallback? onConfigure;
   final VoidCallback onSettings;
 
   @override
@@ -42,13 +42,15 @@ class TopChrome extends StatelessWidget {
         if (!configure) _StatsPill(stats: stats, wifiBand: wifiBand),
         if (configure) const _ConfigureTitle(),
         const SizedBox(width: 8),
-        BlurIconButton(
-          icon: configure ? Icons.check : Icons.tune,
-          active: configure,
-          tooltip: configure ? 'Concluir' : 'Ajustar crop',
-          onPressed: onConfigure,
-        ),
-        const SizedBox(width: 8),
+        if (onConfigure != null) ...[
+          BlurIconButton(
+            icon: configure ? Icons.check : Icons.tune,
+            active: configure,
+            tooltip: configure ? 'Concluir' : 'Ajustar crop',
+            onPressed: onConfigure!,
+          ),
+          const SizedBox(width: 8),
+        ],
         BlurIconButton(
           icon: Icons.settings_outlined,
           tooltip: 'Configurações',

@@ -39,8 +39,8 @@ class EncoderPool(private val recordingsDir: File) {
         if (recordToDisk) {
             if (!recordingsDir.exists()) recordingsDir.mkdirs()
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            hFile = if (horizontalProfile != null) File(recordingsDir, "h_$stamp.h264") else null
-            vFile = if (verticalProfile != null) File(recordingsDir, "v_$stamp.h264") else null
+            hFile = if (horizontalProfile != null) File(recordingsDir, "livegrid_${stamp}_horizontal.mp4") else null
+            vFile = if (verticalProfile != null) File(recordingsDir, "livegrid_${stamp}_vertical.mp4") else null
         } else {
             hFile = null
             vFile = null

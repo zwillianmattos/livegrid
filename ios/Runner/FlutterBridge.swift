@@ -20,6 +20,9 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
     private var verticalEncoder: VideoEncoder?
     private var horizontalPublisher: TcpPublisher?
     private var verticalPublisher: TcpPublisher?
+    private var horizontalRecorder: FileRecorder?
+    private var verticalRecorder: FileRecorder?
+    private var captureMode: String = "live"
 
     private var currentFps: Int = 30
     private var hBytesWindow: Int = 0
@@ -44,7 +47,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         statsTimer?.invalidate()
         statsTimer = nil
         eventSink = nil
-        stopEncoders()
+        stopAllOutputs()
         preview?.release()
         preview = nil
     }
@@ -59,7 +62,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             handleStart(call, result: result)
         case "stop":
             isLive = false
-            stopEncoders()
+            stopAllOutputs()
             result(nil)
         case "switchResolution":
             result(nil)
@@ -148,9 +151,9 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             return
         }
 
-        let channelMode = (profile["channelMode"] as? String) ?? "both"
-        let wantsHorizontal = channelMode != "verticalOnly"
-        let wantsVertical = channelMode != "horizontalOnly"
+        let mode = (profile["mode"] as? String) ?? "live"
+        captureMode = mode
+        let isRecording = mode == "recording"
 
         let cropCenterX = (profile["verticalCropCenterX"] as? Double) ?? 0.5
         preview?.setVerticalCropCenter(CGFloat(cropCenterX))
@@ -169,57 +172,56 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         if vCropW % 2 != 0 { vCropW -= 1 }
         let vCropH = sourceH
 
+        if isRecording {
+            handleStartRecording(
+                hW: hW, hH: hH, hFps: hFps, hBps: hBps,
+                vCropW: vCropW, vCropH: vCropH, vFps: vFps, vBps: vBps,
+                result: result
+            )
+        } else {
+            handleStartLive(
+                hW: hW, hH: hH, hFps: hFps, hBps: hBps, hGop: hGop,
+                network: network,
+                result: result
+            )
+        }
+    }
+
+    private func handleStartLive(
+        hW: Int, hH: Int, hFps: Int, hBps: Int, hGop: Int,
+        network: [String: Any]?,
+        result: @escaping FlutterResult
+    ) {
         let obsHost = ((network?["obsHost"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
         let hPort = (network?["horizontalPort"] as? Int) ?? 9000
-        let vPort = (network?["verticalPort"] as? Int) ?? 9001
 
-        let hPub = wantsHorizontal ? TcpPublisher(port: hPort, label: "H") : nil
-        let vPub = wantsVertical ? TcpPublisher(port: vPort, label: "V") : nil
-        hPub?.open()
-        vPub?.open()
+        let hPub = TcpPublisher(port: hPort, label: "H")
+        hPub.open()
         horizontalPublisher = hPub
-        verticalPublisher = vPub
 
-        let hEnc = wantsHorizontal
-            ? VideoEncoder(width: hW, height: hH, fps: hFps, gop: hGop, bitrate: hBps, label: "H", profileLevel: .baseline)
-            : nil
-        let vEnc = wantsVertical
-            ? VideoEncoder(width: vCropW, height: vCropH, fps: vFps, gop: vGop, bitrate: vBps, label: "V", profileLevel: .baseline)
-            : nil
-
-        hEnc?.onEncoded = { [weak self] f in
+        let hEnc = VideoEncoder(
+            width: hW, height: hH, fps: hFps, gop: hGop, bitrate: hBps,
+            label: "H", profileLevel: .baseline
+        )
+        hEnc.onEncoded = { [weak self] f in
             self?.horizontalPublisher?.publish(annexB: f.data, ptsUs: f.ptsUs, isKeyframe: f.isKeyframe)
         }
-        hEnc?.onBytes = { [weak self] n in
+        hEnc.onBytes = { [weak self] n in
             self?.byteLock.lock(); self?.hBytesWindow += n; self?.byteLock.unlock()
-        }
-        vEnc?.onEncoded = { [weak self] f in
-            self?.verticalPublisher?.publish(annexB: f.data, ptsUs: f.ptsUs, isKeyframe: f.isKeyframe)
-        }
-        vEnc?.onBytes = { [weak self] n in
-            self?.byteLock.lock(); self?.vBytesWindow += n; self?.byteLock.unlock()
         }
 
         do {
-            try hEnc?.start()
-            try vEnc?.start()
+            try hEnc.start()
         } catch {
-            hPub?.close(); vPub?.close()
-            horizontalPublisher = nil; verticalPublisher = nil
+            hPub.close()
+            horizontalPublisher = nil
             result(FlutterError(code: "encoder", message: error.localizedDescription, details: nil))
             return
         }
         horizontalEncoder = hEnc
-        verticalEncoder = vEnc
-        preview?.setEncoders(
-            horizontal: hEnc,
-            vertical: vEnc,
-            verticalCropWidth: wantsVertical ? vCropW : 0,
-            verticalCropHeight: wantsVertical ? vCropH : 0
-        )
+        preview?.setEncoders(horizontal: hEnc, vertical: nil)
 
         isLive = true
-        var payload: [String: Any] = [:]
         let displayHost: String
         if !obsHost.isEmpty {
             displayHost = obsHost
@@ -228,13 +230,60 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         } else {
             displayHost = "<IP_DO_IPHONE>"
         }
-        if wantsHorizontal { payload["horizontalUrl"] = "tcp://\(displayHost):\(hPort)" }
-        if wantsVertical { payload["verticalUrl"] = "tcp://\(displayHost):\(vPort)" }
-        result(payload)
+        result(["horizontalUrl": "tcp://\(displayHost):\(hPort)"])
     }
 
-    private func stopEncoders() {
+    private func handleStartRecording(
+        hW: Int, hH: Int, hFps: Int, hBps: Int,
+        vCropW: Int, vCropH: Int, vFps: Int, vBps: Int,
+        result: @escaping FlutterResult
+    ) {
+        let dir = Self.recordingsDirectory()
+        let stamp = Self.timestampString()
+        let hUrl = dir.appendingPathComponent("livegrid_\(stamp)_horizontal.mp4")
+        let vUrl = dir.appendingPathComponent("livegrid_\(stamp)_vertical.mp4")
+
+        do {
+            let hRec = try FileRecorder(url: hUrl, width: hW, height: hH, fps: hFps, bitrate: hBps)
+            let vRec = try FileRecorder(url: vUrl, width: vCropW, height: vCropH, fps: vFps, bitrate: vBps)
+            horizontalRecorder = hRec
+            verticalRecorder = vRec
+        } catch {
+            horizontalRecorder = nil
+            verticalRecorder = nil
+            result(FlutterError(code: "recorder", message: error.localizedDescription, details: nil))
+            return
+        }
+        preview?.setRecorders(
+            horizontal: horizontalRecorder,
+            vertical: verticalRecorder,
+            verticalCropWidth: vCropW,
+            verticalCropHeight: vCropH
+        )
+        isLive = true
+        result([
+            "horizontalFile": hUrl.path,
+            "verticalFile": vUrl.path,
+        ])
+    }
+
+    private static func recordingsDirectory() -> URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dir = docs.appendingPathComponent("recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func timestampString() -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd_HHmmss"
+        return f.string(from: Date())
+    }
+
+    private func stopAllOutputs() {
         preview?.setEncoders(horizontal: nil, vertical: nil)
+        preview?.setRecorders(horizontal: nil, vertical: nil)
         horizontalEncoder?.stop()
         verticalEncoder?.stop()
         horizontalEncoder = nil
@@ -243,6 +292,16 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         verticalPublisher?.close()
         horizontalPublisher = nil
         verticalPublisher = nil
+        let hRec = horizontalRecorder
+        let vRec = verticalRecorder
+        horizontalRecorder = nil
+        verticalRecorder = nil
+        hRec?.finish { _ in
+            _ = hRec
+        }
+        vRec?.finish { _ in
+            _ = vRec
+        }
     }
 
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {

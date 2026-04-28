@@ -22,7 +22,7 @@ class _SettingsPageState extends State<SettingsPage>
   late CaptureResolution _capture;
   late int _horizontalKbps;
   late int _verticalKbps;
-  late ChannelMode _channelMode;
+  late CaptureMode _mode;
   late TextEditingController _obsHostCtrl;
   late TextEditingController _hPortCtrl;
   late TextEditingController _vPortCtrl;
@@ -37,7 +37,7 @@ class _SettingsPageState extends State<SettingsPage>
     _capture = p.capture;
     _horizontalKbps = p.horizontal.bitrateBps ~/ 1000;
     _verticalKbps = p.vertical.bitrateBps ~/ 1000;
-    _channelMode = p.channelMode;
+    _mode = p.mode;
     _obsHostCtrl = TextEditingController(text: n.obsHost);
     _hPortCtrl = TextEditingController(text: '${n.horizontalPort}');
     _vPortCtrl = TextEditingController(text: '${n.verticalPort}');
@@ -276,36 +276,29 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _qualityBody() {
-    final hEnabled = _channelMode != ChannelMode.verticalOnly;
-    final vEnabled = _channelMode != ChannelMode.horizontalOnly;
+    final isLive = _mode == CaptureMode.live;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ChannelModeSelector(
-          value: _channelMode,
-          onChanged: (m) => setState(() => _channelMode = m),
+        _CaptureModeSelector(
+          value: _mode,
+          onChanged: (m) => setState(() => _mode = m),
+        ),
+        const SizedBox(height: 28),
+        SliderRow(
+          label: 'Horizontal',
+          value: _horizontalKbps.toDouble(),
+          min: 2000,
+          max: 12000,
+          divisions: 20,
+          display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
+          onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
         ),
         const SizedBox(height: 28),
         Opacity(
-          opacity: hEnabled ? 1 : 0.35,
+          opacity: isLive ? 0.35 : 1,
           child: IgnorePointer(
-            ignoring: !hEnabled,
-            child: SliderRow(
-              label: 'Horizontal',
-              value: _horizontalKbps.toDouble(),
-              min: 2000,
-              max: 12000,
-              divisions: 20,
-              display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
-              onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
-            ),
-          ),
-        ),
-        const SizedBox(height: 28),
-        Opacity(
-          opacity: vEnabled ? 1 : 0.35,
-          child: IgnorePointer(
-            ignoring: !vEnabled,
+            ignoring: isLive,
             child: SliderRow(
               label: 'Vertical',
               value: _verticalKbps.toDouble(),
@@ -350,7 +343,7 @@ class _SettingsPageState extends State<SettingsPage>
         horizontal: p.horizontal.copyWith(bitrateBps: _horizontalKbps * 1000),
         vertical: p.vertical.copyWith(bitrateBps: _verticalKbps * 1000),
         cameraId: _cameraId,
-        channelMode: _channelMode,
+        mode: _mode,
       ),
     );
     widget.controller.updateNetwork(
@@ -436,11 +429,11 @@ class _UrlPreviewBlock extends StatelessWidget {
   }
 }
 
-class _ChannelModeSelector extends StatelessWidget {
-  const _ChannelModeSelector({required this.value, required this.onChanged});
+class _CaptureModeSelector extends StatelessWidget {
+  const _CaptureModeSelector({required this.value, required this.onChanged});
 
-  final ChannelMode value;
-  final ValueChanged<ChannelMode> onChanged;
+  final CaptureMode value;
+  final ValueChanged<CaptureMode> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -448,7 +441,7 @@ class _ChannelModeSelector extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          'CANAIS ATIVOS',
+          'MODO',
           style: TextStyle(
             color: AppColors.textFaint,
             fontSize: 10,
@@ -466,14 +459,13 @@ class _ChannelModeSelector extends StatelessWidget {
           ),
           child: Row(
             children: [
-              for (final m in ChannelMode.values)
+              for (final m in CaptureMode.values)
                 Expanded(
-                  child: _ChannelModeOption(
+                  child: _CaptureModeOption(
                     selected: m == value,
                     label: switch (m) {
-                      ChannelMode.both => 'AMBOS',
-                      ChannelMode.horizontalOnly => 'HORIZONTAL',
-                      ChannelMode.verticalOnly => 'VERTICAL',
+                      CaptureMode.live => 'LIVE',
+                      CaptureMode.recording => 'GRAVAÇÃO',
                     },
                     onTap: () => onChanged(m),
                   ),
@@ -483,9 +475,7 @@ class _ChannelModeSelector extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          value == ChannelMode.both
-              ? 'Dois encoders em paralelo. Maior consumo térmico.'
-              : 'Um encoder único. Recomendado em iPhone que esquenta.',
+          value.description,
           style: const TextStyle(color: AppColors.textSubtle, fontSize: 11),
         ),
       ],
@@ -493,8 +483,8 @@ class _ChannelModeSelector extends StatelessWidget {
   }
 }
 
-class _ChannelModeOption extends StatelessWidget {
-  const _ChannelModeOption({
+class _CaptureModeOption extends StatelessWidget {
+  const _CaptureModeOption({
     required this.selected,
     required this.label,
     required this.onTap,

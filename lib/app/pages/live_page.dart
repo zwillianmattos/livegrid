@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../constants/crop.dart';
 import '../controllers/session_controller.dart';
+import '../models/resolution_profile.dart';
 import '../theme/page_routes.dart';
 import '../widgets/atoms/blur_icon_button.dart';
 import '../widgets/live/crop_panel.dart';
@@ -23,6 +24,7 @@ class LivePage extends StatefulWidget {
 
 class _LivePageState extends State<LivePage>
     with SingleTickerProviderStateMixin {
+  static const bool _cropEditEnabled = false;
   bool _configureMode = false;
   bool _showGrid = false;
   DateTime? _liveStartedAt;
@@ -60,6 +62,7 @@ class _LivePageState extends State<LivePage>
   }
 
   void _toggleConfigure() {
+    if (!_cropEditEnabled) return;
     setState(() {
       _configureMode = !_configureMode;
       if (_configureMode) {
@@ -76,6 +79,33 @@ class _LivePageState extends State<LivePage>
     Navigator.of(
       context,
     ).push(fadeRoute((_) => SettingsPage(controller: widget.controller)));
+  }
+
+  Future<void> _stopAndAnnounce(SessionController c) async {
+    final wasRecording = c.profile.mode == CaptureMode.recording;
+    final info = c.lastStart;
+    await c.stop();
+    if (!mounted) return;
+    if (wasRecording && info != null && info.hasFiles) {
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Text(
+            'Salvo:\n'
+            '${_basename(info.horizontalFile)}\n'
+            '${_basename(info.verticalFile)}',
+          ),
+        ),
+      );
+    }
+  }
+
+  static String _basename(String? path) {
+    if (path == null) return '—';
+    final i = path.lastIndexOf('/');
+    return i < 0 ? path : path.substring(i + 1);
   }
 
   @override
@@ -114,16 +144,17 @@ class _LivePageState extends State<LivePage>
                     wifiBand: c.wifiBand,
                     liveStartedAt: _liveStartedAt,
                     configure: _configureMode,
-                    onConfigure: _toggleConfigure,
+                    onConfigure: _cropEditEnabled ? _toggleConfigure : null,
                     onSettings: _openSettings,
                   ),
                 ),
-                Positioned.fill(
-                  child: DraggablePip(
-                    textureId: c.textureId,
-                    cropCenterX: cropCenterX,
+                if (c.profile.mode == CaptureMode.live)
+                  Positioned.fill(
+                    child: DraggablePip(
+                      textureId: c.textureId,
+                      cropCenterX: cropCenterX,
+                    ),
                   ),
-                ),
                 Positioned(
                   left: 0,
                   right: 0,
@@ -134,7 +165,7 @@ class _LivePageState extends State<LivePage>
                       child: RecordButton(
                         state: c.state,
                         onStart: c.start,
-                        onStop: c.stop,
+                        onStop: () => _stopAndAnnounce(c),
                       ),
                     ),
                   ),

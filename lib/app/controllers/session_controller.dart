@@ -33,6 +33,7 @@ class SessionController extends ChangeNotifier {
 
   StreamSubscription<StreamStats>? _statsSub;
   ThermalStatus? _appliedThermal;
+  CaptureStartInfo? _lastStart;
 
   SessionState get state => _state;
   int? get textureId => _textureId;
@@ -42,6 +43,7 @@ class SessionController extends ChangeNotifier {
   SessionProfile get profile => _profile;
   NetworkProfile get network => _network;
   List<CameraInfo> get cameras => _cameras;
+  CaptureStartInfo? get lastStart => _lastStart;
 
   CameraInfo? get selectedCamera {
     if (_cameras.isEmpty) return null;
@@ -119,7 +121,10 @@ class SessionController extends ChangeNotifier {
         _setError('Permissão de câmera/microfone/notificação negada');
         return;
       }
-      await _bridge.startCapture(profile: _profile, network: _network);
+      _lastStart = await _bridge.startCapture(
+        profile: _profile,
+        network: _network,
+      );
       _state = SessionState.live;
       notifyListeners();
     } catch (e) {
@@ -162,13 +167,6 @@ class SessionController extends ChangeNotifier {
     if (_profile.verticalCropCenterX == clamped) return;
     _profile = _profile.copyWith(verticalCropCenterX: clamped);
     notifyListeners();
-    if (isLive) {
-      try {
-        await _bridge.setVerticalCrop(clamped);
-      } catch (e) {
-        _setError('setVerticalCrop failed: $e');
-      }
-    }
   }
 
   Future<void> refreshWifiBand() async {

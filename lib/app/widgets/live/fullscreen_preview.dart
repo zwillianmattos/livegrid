@@ -13,6 +13,7 @@ class FullscreenPreview extends StatelessWidget {
     required this.cropCenterX,
     required this.onCropChanged,
     required this.showGrid,
+    this.showVerticalGuide = true,
   });
 
   final int? textureId;
@@ -21,6 +22,7 @@ class FullscreenPreview extends StatelessWidget {
   final double cropCenterX;
   final ValueChanged<double> onCropChanged;
   final bool showGrid;
+  final bool showVerticalGuide;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +53,12 @@ class FullscreenPreview extends StatelessWidget {
                     child: const CustomPaint(painter: _RuleOfThirdsPainter()),
                   ),
                 ),
+                if (showVerticalGuide)
+                  IgnorePointer(
+                    child: CustomPaint(
+                      painter: _VerticalGuidePainter(cropRect: cropRect),
+                    ),
+                  ),
                 AnimatedBuilder(
                   animation: configureAnim,
                   builder: (context, child) {
@@ -175,6 +183,25 @@ class _RuleOfThirdsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RuleOfThirdsPainter oldDelegate) => false;
+}
+
+class _VerticalGuidePainter extends CustomPainter {
+  _VerticalGuidePainter({required this.cropRect});
+
+  final Rect cropRect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.edit.withValues(alpha: 0.45)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(cropRect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _VerticalGuidePainter oldDelegate) =>
+      oldDelegate.cropRect != cropRect;
 }
 
 class _CropDimPainter extends CustomPainter {

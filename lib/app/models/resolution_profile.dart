@@ -36,15 +36,19 @@ enum VerticalQuality {
   final String description;
 }
 
-enum ChannelMode {
-  both('both', 'Horizontal + Vertical'),
-  horizontalOnly('horizontalOnly', 'Apenas horizontal'),
-  verticalOnly('verticalOnly', 'Apenas vertical');
+enum CaptureMode {
+  live('live', 'Live (OBS)', 'Stream único pro OBS. Crop final na cena.'),
+  recording(
+    'recording',
+    'Gravação',
+    'Salva 16:9 e 9:16 como MP4 no celular. Sem rede.',
+  );
 
-  const ChannelMode(this.wireValue, this.label);
+  const CaptureMode(this.wireValue, this.label, this.description);
 
   final String wireValue;
   final String label;
+  final String description;
 }
 
 class EncoderProfile {
@@ -102,7 +106,7 @@ class SessionProfile {
     required this.vertical,
     this.cameraId,
     this.verticalCropCenterX = 0.5,
-    this.channelMode = ChannelMode.both,
+    this.mode = CaptureMode.live,
   });
 
   final CaptureResolution capture;
@@ -110,13 +114,13 @@ class SessionProfile {
   final EncoderProfile vertical;
   final String? cameraId;
   final double verticalCropCenterX;
-  final ChannelMode channelMode;
+  final CaptureMode mode;
 
   static const defaultProfile = SessionProfile(
     capture: CaptureResolution.fhd1920x1080,
     horizontal: EncoderProfile.horizontal1080p,
     vertical: EncoderProfile.vertical1080p,
-    channelMode: ChannelMode.horizontalOnly,
+    mode: CaptureMode.live,
   );
 
   SessionProfile copyWith({
@@ -125,14 +129,14 @@ class SessionProfile {
     EncoderProfile? vertical,
     String? cameraId,
     double? verticalCropCenterX,
-    ChannelMode? channelMode,
+    CaptureMode? mode,
   }) => SessionProfile(
     capture: capture ?? this.capture,
     horizontal: horizontal ?? this.horizontal,
     vertical: vertical ?? this.vertical,
     cameraId: cameraId ?? this.cameraId,
     verticalCropCenterX: verticalCropCenterX ?? this.verticalCropCenterX,
-    channelMode: channelMode ?? this.channelMode,
+    mode: mode ?? this.mode,
   );
 
   Map<String, Object?> toMap() => {
@@ -141,6 +145,6 @@ class SessionProfile {
     'vertical': vertical.toMap(),
     'cameraId': cameraId,
     'verticalCropCenterX': verticalCropCenterX,
-    'channelMode': channelMode.wireValue,
+    'mode': mode.wireValue,
   };
 }

@@ -14,6 +14,8 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
 
     private var horizontalEncoder: VideoEncoder?
     private var verticalEncoder: VideoEncoder?
+    private var horizontalRecorder: FileRecorder?
+    private var verticalRecorder: FileRecorder?
     private var verticalPool: CVPixelBufferPool?
     private var verticalCropWidth: Int = 0
     private var verticalCropHeight: Int = 0
@@ -43,11 +45,36 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             verticalEncoder = vertical
             self.verticalCropWidth = verticalCropWidth
             self.verticalCropHeight = verticalCropHeight
-            if vertical != nil, verticalCropWidth > 0, verticalCropHeight > 0 {
-                verticalPool = makeNV12Pool(width: verticalCropWidth, height: verticalCropHeight)
-            } else {
-                verticalPool = nil
+            updateVerticalPool()
+        }
+    }
+
+    func setRecorders(
+        horizontal: FileRecorder?,
+        vertical: FileRecorder?,
+        verticalCropWidth: Int = 0,
+        verticalCropHeight: Int = 0
+    ) {
+        queue.sync {
+            horizontalRecorder = horizontal
+            verticalRecorder = vertical
+            if vertical != nil {
+                self.verticalCropWidth = verticalCropWidth
+                self.verticalCropHeight = verticalCropHeight
             }
+            updateVerticalPool()
+        }
+    }
+
+    private func updateVerticalPool() {
+        let needsCrop = (verticalEncoder != nil || verticalRecorder != nil)
+            && verticalCropWidth > 0 && verticalCropHeight > 0
+        if needsCrop {
+            if verticalPool == nil {
+                verticalPool = makeNV12Pool(width: verticalCropWidth, height: verticalCropHeight)
+            }
+        } else {
+            verticalPool = nil
         }
     }
 
@@ -118,6 +145,7 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     func release() {
         stop()
         setEncoders(horizontal: nil, vertical: nil)
+        setRecorders(horizontal: nil, vertical: nil)
         if let reg = registry, textureId >= 0 {
             reg.unregisterTexture(textureId)
         }
@@ -138,13 +166,14 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-        if let enc = horizontalEncoder {
-            enc.encode(pixelBuffer: pixelBuffer, pts: pts)
-        }
+        horizontalEncoder?.encode(pixelBuffer: pixelBuffer, pts: pts)
+        horizontalRecorder?.append(pixelBuffer: pixelBuffer, pts: pts)
 
-        if let enc = verticalEncoder, let pool = verticalPool,
+        let needsCrop = verticalEncoder != nil || verticalRecorder != nil
+        if needsCrop, let pool = verticalPool,
            let cropped = makeVerticalCrop(source: pixelBuffer, pool: pool) {
-            enc.encode(pixelBuffer: cropped, pts: pts)
+            verticalEncoder?.encode(pixelBuffer: cropped, pts: pts)
+            verticalRecorder?.append(pixelBuffer: cropped, pts: pts)
         }
     }
 

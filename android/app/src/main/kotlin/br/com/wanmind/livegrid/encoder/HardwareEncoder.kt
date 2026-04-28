@@ -3,6 +3,7 @@ package br.com.wanmind.livegrid.encoder
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -32,6 +33,10 @@ class HardwareEncoder(
     private var codec: MediaCodec? = null
     private var inputSurface: Surface? = null
     private var fos: FileOutputStream? = null
+    private var muxer: MediaMuxer? = null
+    private var muxerTrack: Int = -1
+    private var muxerStarted = false
+    private val isMp4 = outputFile?.name?.endsWith(".mp4", ignoreCase = true) == true
     private val thread = HandlerThread("enc-${profile.label}").apply { start() }
     private val handler = Handler(thread.looper)
     private val running = AtomicBoolean(false)
@@ -90,7 +95,13 @@ class HardwareEncoder(
         }
         val surface = c.createInputSurface()
         inputSurface = surface
-        fos = outputFile?.let { FileOutputStream(it) }
+        if (outputFile != null) {
+            if (isMp4) {
+                muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            } else {
+                fos = FileOutputStream(outputFile)
+            }
+        }
         c.start()
         running.set(true)
         Log.i(
@@ -160,6 +171,17 @@ class HardwareEncoder(
         } catch (_: Throwable) {
         }
         fos = null
+        try {
+            if (muxerStarted) muxer?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            muxer?.release()
+        } catch (_: Throwable) {
+        }
+        muxer = null
+        muxerStarted = false
+        muxerTrack = -1
         thread.quitSafely()
     }
 
@@ -175,12 +197,27 @@ class HardwareEncoder(
             try {
                 val buffer = codec.getOutputBuffer(index) ?: return
                 if (info.size > 0) {
-                    val chunk = ByteArray(info.size)
-                    buffer.position(info.offset)
-                    buffer.get(chunk, 0, info.size)
-                    fos?.write(chunk)
+                    val isCodecConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                    if (isMp4) {
+                        if (muxerStarted && !isCodecConfig) {
+                            val view = buffer.duplicate()
+                            view.position(info.offset)
+                            view.limit(info.offset + info.size)
+                            muxer?.writeSampleData(muxerTrack, view, info)
+                        }
+                    } else if (fos != null) {
+                        val chunk = ByteArray(info.size)
+                        buffer.position(info.offset)
+                        buffer.get(chunk, 0, info.size)
+                        fos?.write(chunk)
+                    }
                     bitrateMeter.record(info.size)
-                    onFrame?.invoke(chunk, info.presentationTimeUs, info.flags)
+                    if (onFrame != null) {
+                        val chunk = ByteArray(info.size)
+                        buffer.position(info.offset)
+                        buffer.get(chunk, 0, info.size)
+                        onFrame.invoke(chunk, info.presentationTimeUs, info.flags)
+                    }
                 }
                 codec.releaseOutputBuffer(index, false)
                 if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -197,6 +234,12 @@ class HardwareEncoder(
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             Log.i(TAG, "format ${profile.label}: $format")
+            if (isMp4) {
+                val m = muxer ?: return
+                muxerTrack = m.addTrack(format)
+                m.start()
+                muxerStarted = true
+            }
         }
     }
 

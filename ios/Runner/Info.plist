@@ -4,6 +4,12 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>LiveGrid salva os vídeos gravados no rolo da câmera.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>LiveGrid usa a câmera para capturar e transmitir vídeo ao vivo.</string>
 	<key>NSMicrophoneUsageDescription</key>

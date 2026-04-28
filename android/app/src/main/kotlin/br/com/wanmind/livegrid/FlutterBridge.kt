@@ -142,14 +142,14 @@ class FlutterBridge(
             )
         }
 
-        val channelMode = (profile?.get("channelMode") as? String) ?: "both"
-        val wantsHorizontal = channelMode != "verticalOnly"
-        val wantsVertical = channelMode != "horizontalOnly"
+        val mode = (profile?.get("mode") as? String) ?: "live"
+        val isRecording = mode == "recording"
+        val wantsHorizontal = true
+        val wantsVertical = isRecording
 
-        val hProfile: HardwareEncoder.Profile? = if (wantsHorizontal) {
-            extractProfile(profile?.get("horizontal") as? Map<*, *>, "H")
-                ?: return result.error("bad_profile", "horizontal inválido", null)
-        } else null
+        val hProfile: HardwareEncoder.Profile? = extractProfile(
+            profile?.get("horizontal") as? Map<*, *>, "H"
+        ) ?: return result.error("bad_profile", "horizontal inválido", null)
         val vProfile: HardwareEncoder.Profile? = if (wantsVertical) {
             extractProfile(profile?.get("vertical") as? Map<*, *>, "V")
                 ?: return result.error("bad_profile", "vertical inválido", null)
@@ -162,18 +162,15 @@ class FlutterBridge(
 
         val obsHost = (network?.get("obsHost") as? String)?.trim().orEmpty()
         val hPort = (network?.get("horizontalPort") as? Number)?.toInt() ?: 9000
-        val vPort = (network?.get("verticalPort") as? Number)?.toInt() ?: 9001
-        val hPub = if (wantsHorizontal) TcpPublisher(hPort, "H") else null
-        val vPub = if (wantsVertical) TcpPublisher(vPort, "V") else null
+        val hPub = if (!isRecording) TcpPublisher(hPort, "H") else null
 
-        val recordToDisk = (profile?.get("recordToDisk") as? Boolean) ?: false
         startForegroundService()
         val output = pipeline.startRecording(
             horizontalProfile = hProfile,
             verticalProfile = vProfile,
             horizontalPublisher = hPub,
-            verticalPublisher = vPub,
-            recordToDisk = recordToDisk,
+            verticalPublisher = null,
+            recordToDisk = isRecording,
         ) { msg ->
             handler.post {
                 live = false
@@ -187,15 +184,15 @@ class FlutterBridge(
                 obsHost.isNotEmpty() -> obsHost
                 else -> localWifiIp() ?: "<IP_DO_CELULAR>"
             }
-            Log.i(TAG, "recording files=${output.horizontalFile} tcp=$displayHost:$hPort/$vPort")
-            result.success(
-                mapOf(
-                    "horizontalFile" to output.horizontalFile?.absolutePath,
-                    "verticalFile" to output.verticalFile?.absolutePath,
-                    "horizontalUrl" to if (wantsHorizontal) "tcp://$displayHost:$hPort" else null,
-                    "verticalUrl" to if (wantsVertical) "tcp://$displayHost:$vPort" else null,
-                )
-            )
+            Log.i(TAG, "mode=$mode files=${output.horizontalFile}/${output.verticalFile} tcp=$displayHost:$hPort")
+            val payload = mutableMapOf<String, Any?>()
+            if (isRecording) {
+                payload["horizontalFile"] = output.horizontalFile?.absolutePath
+                payload["verticalFile"] = output.verticalFile?.absolutePath
+            } else {
+                payload["horizontalUrl"] = "tcp://$displayHost:$hPort"
+            }
+            result.success(payload)
         }
     }
 

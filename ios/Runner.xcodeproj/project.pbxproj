@@ -23,6 +23,7 @@
 		F1F1F1F52F01000000000005 /* MpegTsMuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1F42F01000000000006 /* MpegTsMuxer.swift */; };
 		F1F1F1F72F01000000000007 /* UdpPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1F62F01000000000008 /* UdpPublisher.swift */; };
 		F1F1F1F92F01000000000009 /* VideoEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1F82F0100000000000A /* VideoEncoder.swift */; };
+		F1F1F1FB2F0100000000000B /* FileRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1FA2F0100000000000C /* FileRecorder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,6 +78,7 @@
 		F1F1F1F42F01000000000006 /* MpegTsMuxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MpegTsMuxer.swift; sourceTree = "<group>"; };
 		F1F1F1F62F01000000000008 /* UdpPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpPublisher.swift; sourceTree = "<group>"; };
 		F1F1F1F82F0100000000000A /* VideoEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoEncoder.swift; sourceTree = "<group>"; };
+		F1F1F1FA2F0100000000000C /* FileRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRecorder.swift; sourceTree = "<group>"; };
 		F689465B1C7F3CCAE3D8D70A /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		FF45C96C3946EA61E66CFD3A /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -172,6 +174,7 @@
 				F1F1F1F42F01000000000006 /* MpegTsMuxer.swift */,
 				F1F1F1F62F01000000000008 /* UdpPublisher.swift */,
 				F1F1F1F82F0100000000000A /* VideoEncoder.swift */,
+				F1F1F1FA2F0100000000000C /* FileRecorder.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -412,6 +415,7 @@
 				F1F1F1F52F01000000000005 /* MpegTsMuxer.swift in Sources */,
 				F1F1F1F72F01000000000007 /* UdpPublisher.swift in Sources */,
 				F1F1F1F92F01000000000009 /* VideoEncoder.swift in Sources */,
+				F1F1F1FB2F0100000000000B /* FileRecorder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

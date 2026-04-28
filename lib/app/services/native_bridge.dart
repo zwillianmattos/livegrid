@@ -30,14 +30,18 @@ class NativeBridge {
         .toList(growable: false);
   }
 
-  Future<void> startCapture({
+  Future<CaptureStartInfo> startCapture({
     required SessionProfile profile,
     required NetworkProfile network,
   }) async {
-    await _control.invokeMethod<void>('startCapture', {
+    final raw = await _control.invokeMethod<Object?>('startCapture', {
       'profile': profile.toMap(),
       'network': network.toMap(),
     });
+    final map = (raw is Map)
+        ? raw.cast<Object?, Object?>()
+        : const <Object?, Object?>{};
+    return CaptureStartInfo.fromMap(map);
   }
 
   Future<void> stop() async {
@@ -105,5 +109,30 @@ class NativeBridge {
       final map = (event as Map).cast<Object?, Object?>();
       return StreamStats.fromMap(map);
     });
+  }
+}
+
+class CaptureStartInfo {
+  const CaptureStartInfo({
+    this.horizontalUrl,
+    this.verticalUrl,
+    this.horizontalFile,
+    this.verticalFile,
+  });
+
+  final String? horizontalUrl;
+  final String? verticalUrl;
+  final String? horizontalFile;
+  final String? verticalFile;
+
+  bool get hasFiles => horizontalFile != null || verticalFile != null;
+
+  static CaptureStartInfo fromMap(Map<Object?, Object?> map) {
+    return CaptureStartInfo(
+      horizontalUrl: map['horizontalUrl'] as String?,
+      verticalUrl: map['verticalUrl'] as String?,
+      horizontalFile: map['horizontalFile'] as String?,
+      verticalFile: map['verticalFile'] as String?,
+    );
   }
 }
