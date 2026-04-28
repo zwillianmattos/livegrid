@@ -59,6 +59,10 @@ class SessionController extends ChangeNotifier {
     try {
       _textureId = await _bridge.init();
       _wifiBand = await _bridge.wifiBand();
+      final ip = await _bridge.deviceIp();
+      if (ip != null && ip.isNotEmpty) {
+        _network = _network.copyWith(obsHost: ip);
+      }
       _cameras = await _bridge.listCameras();
       if (_profile.cameraId == null && _cameras.isNotEmpty) {
         final back = _cameras.firstWhere(
@@ -80,6 +84,14 @@ class SessionController extends ChangeNotifier {
   Future<void> refreshCameras() async {
     _cameras = await _bridge.listCameras();
     notifyListeners();
+  }
+
+  Future<void> refreshDeviceIp() async {
+    final ip = await _bridge.deviceIp();
+    if (ip != null && ip.isNotEmpty && ip != _network.obsHost) {
+      _network = _network.copyWith(obsHost: ip);
+      notifyListeners();
+    }
   }
 
   void selectCamera(String cameraId) {

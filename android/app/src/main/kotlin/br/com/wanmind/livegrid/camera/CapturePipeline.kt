@@ -8,7 +8,7 @@ import android.view.Surface
 import android.view.WindowManager
 import br.com.wanmind.livegrid.encoder.EncoderPool
 import br.com.wanmind.livegrid.encoder.HardwareEncoder
-import br.com.wanmind.livegrid.stream.UdpPublisher
+import br.com.wanmind.livegrid.stream.TcpPublisher
 import io.flutter.view.TextureRegistry
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -74,6 +74,7 @@ class CapturePipeline(
                     outputs = listOf(inputSurface),
                     targetWidth = captureWidth,
                     targetHeight = captureHeight,
+                    onSizeChosen = { w, h -> r.setInputBufferSize(w, h) },
                     onReady = { res ->
                         r.configureInputSize(
                             width = res.width,
@@ -96,10 +97,10 @@ class CapturePipeline(
     }
 
     fun startRecording(
-        horizontalProfile: HardwareEncoder.Profile,
-        verticalProfile: HardwareEncoder.Profile,
-        horizontalPublisher: UdpPublisher? = null,
-        verticalPublisher: UdpPublisher? = null,
+        horizontalProfile: HardwareEncoder.Profile?,
+        verticalProfile: HardwareEncoder.Profile?,
+        horizontalPublisher: TcpPublisher? = null,
+        verticalPublisher: TcpPublisher? = null,
         recordToDisk: Boolean = true,
         onError: (String) -> Unit,
     ): EncoderPool.Output? {
@@ -127,15 +128,17 @@ class CapturePipeline(
 
     fun setHorizontalBitrate(bps: Int) = encoderPool.setHorizontalBitrate(bps)
     fun setVerticalBitrate(bps: Int) = encoderPool.setVerticalBitrate(bps)
+    fun setFrameRate(fps: Int) = encoderPool.setFrameRate(fps)
     fun setVerticalCropCenter(value: Float) {
         renderer?.setVerticalCropCenter(value)
     }
     fun requestKeyframes() = encoderPool.requestKeyframes()
     fun horizontalBitrate(): Int = encoderPool.horizontalBitrate()
     fun verticalBitrate(): Int = encoderPool.verticalBitrate()
-    fun horizontalPublisherSnapshot(): UdpPublisher.Snapshot? =
+    fun currentFps(): Int = encoderPool.currentFps()
+    fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         encoderPool.horizontalPublisherSnapshot()
-    fun verticalPublisherSnapshot(): UdpPublisher.Snapshot? =
+    fun verticalPublisherSnapshot(): TcpPublisher.Snapshot? =
         encoderPool.verticalPublisherSnapshot()
     val isRecording: Boolean get() = encoderPool.isRunning
 

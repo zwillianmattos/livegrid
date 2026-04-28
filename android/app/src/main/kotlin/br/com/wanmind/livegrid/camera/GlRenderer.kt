@@ -81,6 +81,14 @@ class GlRenderer(private val core: GlCore) {
         }
     }
 
+    fun setInputBufferSize(width: Int, height: Int) {
+        handler.post {
+            if (this::inputSurfaceTexture.isInitialized) {
+                inputSurfaceTexture.setDefaultBufferSize(width, height)
+            }
+        }
+    }
+
     fun configureInputSize(
         width: Int,
         height: Int,
@@ -228,7 +236,7 @@ class GlRenderer(private val core: GlCore) {
             attribute vec2 aTexCoord;
             uniform mat4 uTexMatrix;
             uniform vec4 uCrop;
-            varying vec2 vTexCoord;
+            varying highp vec2 vTexCoord;
             void main() {
                 vec2 uv = aTexCoord * uCrop.xy + uCrop.zw;
                 vTexCoord = (uTexMatrix * vec4(uv, 0.0, 1.0)).xy;
@@ -238,9 +246,9 @@ class GlRenderer(private val core: GlCore) {
 
         private const val FRAGMENT_SHADER = """
             #extension GL_OES_EGL_image_external : require
-            precision mediump float;
+            precision highp float;
             uniform samplerExternalOES sTexture;
-            varying vec2 vTexCoord;
+            varying highp vec2 vTexCoord;
             void main() {
                 gl_FragColor = texture2D(sTexture, vTexCoord);
             }

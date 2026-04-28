@@ -88,6 +88,8 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             result(nil)
         case "wifiBand":
             result("unknown")
+        case "deviceIp":
+            result(Self.localWifiIp())
         default:
             result(FlutterMethodNotImplemented)
         }

@@ -1,6 +1,6 @@
 class NetworkProfile {
   const NetworkProfile({
-    this.obsHost = '192.168.1.151',
+    this.obsHost = '',
     this.horizontalPort = 9000,
     this.verticalPort = 9001,
     this.srtLatencyMs = 120,

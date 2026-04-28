@@ -107,7 +107,7 @@ class MpegTsMuxer(
             val remaining = pes.size - offset
             val headerLen: Int
             val afSize: Int
-            val includePcr = first && isKeyframe
+            val includePcr = first
 
             var provisionalPayload = if (includePcr) PAYLOAD_SIZE - 8 else PAYLOAD_SIZE
             val chunkSize: Int
@@ -136,7 +136,9 @@ class MpegTsMuxer(
                 pkt[i++] = afSize.toByte()
                 if (afSize > 0) {
                     if (includePcr) {
-                        pkt[i++] = 0x50
+                        var afFlags = 0x10
+                        if (isKeyframe) afFlags = afFlags or 0x40
+                        pkt[i++] = afFlags.toByte()
                         writePcr(pkt, i, pts90 * 300L)
                         i += 6
                         val stuffing = afSize - 7

@@ -38,6 +38,7 @@ class OpenGateCamera(private val context: Context) {
         outputs: List<Surface>,
         targetWidth: Int? = null,
         targetHeight: Int? = null,
+        onSizeChosen: (Int, Int) -> Unit = { _, _ -> },
         onReady: (OpenResult) -> Unit,
         onError: (String) -> Unit,
     ) {
@@ -50,6 +51,7 @@ class OpenGateCamera(private val context: Context) {
             val best = pickSize(sizes, targetWidth, targetHeight) ?: return onError("no size")
             val sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             Log.i(TAG, "cam=$cameraId size=${best.width}x${best.height} target=${targetWidth}x${targetHeight} sensor=$sensorOrientation")
+            onSizeChosen(best.width, best.height)
 
             manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {

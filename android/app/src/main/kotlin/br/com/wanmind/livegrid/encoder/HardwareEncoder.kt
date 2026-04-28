@@ -36,6 +36,7 @@ class HardwareEncoder(
     private val handler = Handler(thread.looper)
     private val running = AtomicBoolean(false)
     private var currentBitrate = profile.bitrateBps
+    private var currentFps = profile.fps
 
     fun start(): Surface {
         val c = MediaCodec.createEncoderByType(MIME)
@@ -119,6 +120,19 @@ class HardwareEncoder(
             Log.w(TAG, "requestSyncFrame ${profile.label}: ${t.message}")
         }
     }
+
+    fun setFrameRate(fps: Int) {
+        if (fps <= 0 || fps == currentFps || !running.get()) return
+        currentFps = fps
+        val params = Bundle().apply { putInt(MediaFormat.KEY_FRAME_RATE, fps) }
+        try {
+            codec?.setParameters(params)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setFrameRate ${profile.label}: ${t.message}")
+        }
+    }
+
+    fun fps(): Int = currentFps
 
     fun stop() {
         if (!running.getAndSet(false)) return

@@ -16,13 +16,15 @@ import androidx.annotation.RequiresApi
 import br.com.wanmind.livegrid.camera.CapturePipeline
 import br.com.wanmind.livegrid.encoder.HardwareEncoder
 import br.com.wanmind.livegrid.service.LiveGridForegroundService
-import br.com.wanmind.livegrid.stream.UdpPublisher
+import br.com.wanmind.livegrid.stream.TcpPublisher
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
 class FlutterBridge(
     private val context: Context,
@@ -48,6 +50,7 @@ class FlutterBridge(
     private var statsRunning = false
     private var live = false
     private var lastThermalLogged = -1
+    private var currentFps = 30
 
     private var activeCameraId: String? = null
 
@@ -73,6 +76,15 @@ class FlutterBridge(
                 call.argument<Int>("verticalBps")?.let { pipeline.setVerticalBitrate(it) }
                 result.success(null)
             }
+            "setFrameRate" -> {
+                call.argument<Int>("fps")?.let { fps ->
+                    if (fps > 0) {
+                        currentFps = fps
+                        pipeline.setFrameRate(fps)
+                    }
+                }
+                result.success(null)
+            }
             "requestKeyframe" -> {
                 pipeline.requestKeyframes()
                 result.success(null)
@@ -83,6 +95,7 @@ class FlutterBridge(
                 result.success(null)
             }
             "wifiBand" -> result.success(currentWifiBand())
+            "deviceIp" -> result.success(localWifiIp())
             else -> result.notImplemented()
         }
     }
@@ -129,10 +142,20 @@ class FlutterBridge(
             )
         }
 
-        val hProfile = extractProfile(profile?.get("horizontal") as? Map<*, *>, "H")
-            ?: return result.error("bad_profile", "horizontal inválido", null)
-        val vProfile = extractProfile(profile?.get("vertical") as? Map<*, *>, "V")
-            ?: return result.error("bad_profile", "vertical inválido", null)
+        val channelMode = (profile?.get("channelMode") as? String) ?: "both"
+        val wantsHorizontal = channelMode != "verticalOnly"
+        val wantsVertical = channelMode != "horizontalOnly"
+
+        val hProfile: HardwareEncoder.Profile? = if (wantsHorizontal) {
+            extractProfile(profile?.get("horizontal") as? Map<*, *>, "H")
+                ?: return result.error("bad_profile", "horizontal inválido", null)
+        } else null
+        val vProfile: HardwareEncoder.Profile? = if (wantsVertical) {
+            extractProfile(profile?.get("vertical") as? Map<*, *>, "V")
+                ?: return result.error("bad_profile", "vertical inválido", null)
+        } else null
+
+        currentFps = hProfile?.fps ?: vProfile?.fps ?: currentFps
 
         val cropCenterX = (profile?.get("verticalCropCenterX") as? Number)?.toFloat() ?: 0.5f
         pipeline.setVerticalCropCenter(cropCenterX)
@@ -140,8 +163,8 @@ class FlutterBridge(
         val obsHost = (network?.get("obsHost") as? String)?.trim().orEmpty()
         val hPort = (network?.get("horizontalPort") as? Number)?.toInt() ?: 9000
         val vPort = (network?.get("verticalPort") as? Number)?.toInt() ?: 9001
-        val hPub = if (obsHost.isNotEmpty()) UdpPublisher(obsHost, hPort, "H") else null
-        val vPub = if (obsHost.isNotEmpty()) UdpPublisher(obsHost, vPort, "V") else null
+        val hPub = if (wantsHorizontal) TcpPublisher(hPort, "H") else null
+        val vPub = if (wantsVertical) TcpPublisher(vPort, "V") else null
 
         val recordToDisk = (profile?.get("recordToDisk") as? Boolean) ?: false
         startForegroundService()
@@ -160,13 +183,17 @@ class FlutterBridge(
         }
         if (output != null) {
             live = true
-            Log.i(TAG, "recording files=${output.horizontalFile} udp=${obsHost}:$hPort/$vPort")
+            val displayHost = when {
+                obsHost.isNotEmpty() -> obsHost
+                else -> localWifiIp() ?: "<IP_DO_CELULAR>"
+            }
+            Log.i(TAG, "recording files=${output.horizontalFile} tcp=$displayHost:$hPort/$vPort")
             result.success(
                 mapOf(
                     "horizontalFile" to output.horizontalFile?.absolutePath,
                     "verticalFile" to output.verticalFile?.absolutePath,
-                    "horizontalUrl" to if (obsHost.isNotEmpty()) "udp://$obsHost:$hPort" else null,
-                    "verticalUrl" to if (obsHost.isNotEmpty()) "udp://$obsHost:$vPort" else null,
+                    "horizontalUrl" to if (wantsHorizontal) "tcp://$displayHost:$hPort" else null,
+                    "verticalUrl" to if (wantsVertical) "tcp://$displayHost:$vPort" else null,
                 )
             )
         }
@@ -211,7 +238,7 @@ class FlutterBridge(
             val payload = mapOf<String, Any>(
                 "bitrateA" to hBps,
                 "bitrateB" to vBps,
-                "fps" to if (live) 30.0 else 0.0,
+                "fps" to if (live) currentFps.toDouble() else 0.0,
                 "droppedFrames" to 0,
                 "thermalStatus" to thermal,
                 "srtRtt" to 0.0,
@@ -297,6 +324,30 @@ class FlutterBridge(
             freq in 2400..2500 -> "2.4"
             freq in 4900..5900 -> "5"
             else -> "unknown"
+        }
+    }
+
+    private fun localWifiIp(): String? {
+        return try {
+            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            var fallback: String? = null
+            while (ifaces.hasMoreElements()) {
+                val iface = ifaces.nextElement()
+                if (!iface.isUp || iface.isLoopback) continue
+                val name = iface.name.lowercase()
+                val addrs = iface.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        if (name.startsWith("wlan") || name.startsWith("ap")) return ip
+                        if (fallback == null) fallback = ip
+                    }
+                }
+            }
+            fallback
+        } catch (_: Throwable) {
+            null
         }
     }
 

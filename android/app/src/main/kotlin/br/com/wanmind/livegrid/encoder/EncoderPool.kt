@@ -3,7 +3,7 @@ package br.com.wanmind.livegrid.encoder
 import android.media.MediaCodec
 import android.util.Log
 import br.com.wanmind.livegrid.camera.GlRenderer
-import br.com.wanmind.livegrid.stream.UdpPublisher
+import br.com.wanmind.livegrid.stream.TcpPublisher
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -17,8 +17,8 @@ class EncoderPool(private val recordingsDir: File) {
     )
 
     data class Publishers(
-        val horizontal: UdpPublisher?,
-        val vertical: UdpPublisher?,
+        val horizontal: TcpPublisher?,
+        val vertical: TcpPublisher?,
     )
 
     private var horizontal: HardwareEncoder? = null
@@ -28,8 +28,8 @@ class EncoderPool(private val recordingsDir: File) {
     private var publishers: Publishers = Publishers(null, null)
 
     fun start(
-        horizontalProfile: HardwareEncoder.Profile,
-        verticalProfile: HardwareEncoder.Profile,
+        horizontalProfile: HardwareEncoder.Profile?,
+        verticalProfile: HardwareEncoder.Profile?,
         renderer: GlRenderer,
         publishers: Publishers = Publishers(null, null),
         recordToDisk: Boolean = true,
@@ -39,8 +39,8 @@ class EncoderPool(private val recordingsDir: File) {
         if (recordToDisk) {
             if (!recordingsDir.exists()) recordingsDir.mkdirs()
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            hFile = File(recordingsDir, "h_$stamp.h264")
-            vFile = File(recordingsDir, "v_$stamp.h264")
+            hFile = if (horizontalProfile != null) File(recordingsDir, "h_$stamp.h264") else null
+            vFile = if (verticalProfile != null) File(recordingsDir, "v_$stamp.h264") else null
         } else {
             hFile = null
             vFile = null
@@ -49,43 +49,50 @@ class EncoderPool(private val recordingsDir: File) {
         publishers.horizontal?.open()
         publishers.vertical?.open()
 
-        val h = HardwareEncoder(horizontalProfile, hFile, onFrame = { data, pts, flags ->
-            val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-            publishers.horizontal?.publish(data, pts, isKey)
-        })
-        val v = HardwareEncoder(verticalProfile, vFile, onFrame = { data, pts, flags ->
-            val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-            publishers.vertical?.publish(data, pts, isKey)
-        })
+        horizontalProfile?.let { hp ->
+            val h = HardwareEncoder(hp, hFile, onFrame = { data, pts, flags ->
+                val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                    flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                publishers.horizontal?.publish(data, pts, isKey)
+            })
+            val hSurface = h.start()
+            horizontal = h
+            horizontalTarget = renderer.addTarget(
+                hSurface,
+                hp.width,
+                hp.height,
+                GlRenderer.CROP_HORIZONTAL_16_9,
+                releaseSurface = true,
+            )
+        }
 
-        val hSurface = h.start()
-        val vSurface = v.start()
-        horizontal = h
-        vertical = v
+        verticalProfile?.let { vp ->
+            val v = HardwareEncoder(vp, vFile, onFrame = { data, pts, flags ->
+                val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                    flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                publishers.vertical?.publish(data, pts, isKey)
+            })
+            val vSurface = v.start()
+            vertical = v
+            verticalTarget = renderer.addTarget(
+                vSurface,
+                vp.width,
+                vp.height,
+                GlRenderer.CROP_VERTICAL_9_16,
+                releaseSurface = true,
+            )
+        }
 
-        horizontalTarget = renderer.addTarget(
-            hSurface,
-            horizontalProfile.width,
-            horizontalProfile.height,
-            GlRenderer.CROP_HORIZONTAL_16_9,
-            releaseSurface = true,
-        )
-        verticalTarget = renderer.addTarget(
-            vSurface,
-            verticalProfile.width,
-            verticalProfile.height,
-            GlRenderer.CROP_VERTICAL_9_16,
-            releaseSurface = true,
-        )
-
-        Log.i(TAG, "encoders on (file=$recordToDisk, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
+        Log.i(TAG, "encoders on (file=$recordToDisk, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
         return Output(hFile, vFile)
     }
 
     fun setHorizontalBitrate(bps: Int) = horizontal?.setBitrate(bps)
     fun setVerticalBitrate(bps: Int) = vertical?.setBitrate(bps)
+    fun setFrameRate(fps: Int) {
+        horizontal?.setFrameRate(fps)
+        vertical?.setFrameRate(fps)
+    }
     fun requestKeyframes() {
         horizontal?.requestSyncFrame()
         vertical?.requestSyncFrame()
@@ -93,10 +100,11 @@ class EncoderPool(private val recordingsDir: File) {
 
     fun horizontalBitrate(): Int = horizontal?.bitrateMeter?.sampleBps() ?: 0
     fun verticalBitrate(): Int = vertical?.bitrateMeter?.sampleBps() ?: 0
+    fun currentFps(): Int = horizontal?.fps() ?: vertical?.fps() ?: 0
 
-    fun horizontalPublisherSnapshot(): UdpPublisher.Snapshot? =
+    fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         publishers.horizontal?.snapshot()
-    fun verticalPublisherSnapshot(): UdpPublisher.Snapshot? =
+    fun verticalPublisherSnapshot(): TcpPublisher.Snapshot? =
         publishers.vertical?.snapshot()
 
     val isRunning: Boolean get() = horizontal != null || vertical != null

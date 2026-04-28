@@ -80,6 +80,14 @@ class NativeBridge {
     }
   }
 
+  Future<String?> deviceIp() async {
+    try {
+      return await _control.invokeMethod<String>('deviceIp');
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   Future<WifiBand> wifiBand() async {
     final raw = await _control.invokeMethod<String>('wifiBand');
     switch (raw) {

@@ -43,7 +43,20 @@ class _SettingsPageState extends State<SettingsPage>
     _vPortCtrl = TextEditingController(text: '${n.verticalPort}');
     _cameraId = p.cameraId ?? widget.controller.selectedCamera?.id;
     _tabController = TabController(length: 4, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureCameras());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ensureCameras();
+      _ensureDeviceIp();
+    });
+  }
+
+  Future<void> _ensureDeviceIp() async {
+    await widget.controller.refreshDeviceIp();
+    if (!mounted) return;
+    final ip = widget.controller.network.obsHost;
+    if (ip != _obsHostCtrl.text) {
+      _obsHostCtrl.text = ip;
+      setState(() {});
+    }
   }
 
   @override
@@ -218,14 +231,13 @@ class _SettingsPageState extends State<SettingsPage>
       children: [
         TextField(
           controller: _obsHostCtrl,
+          readOnly: true,
+          enableInteractiveSelection: true,
           decoration: const InputDecoration(
-            labelText: 'IP do iPhone na LAN',
-            hintText: '192.168.1.50',
-            helperText: 'OBS conecta nesse endereço (TCP)',
+            labelText: 'IP do dispositivo',
+            helperText: 'Detectado automaticamente — OBS conecta aqui (TCP)',
           ),
-          keyboardType: TextInputType.url,
           style: const TextStyle(color: AppColors.text, fontSize: 13),
-          onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 12),
         Row(
