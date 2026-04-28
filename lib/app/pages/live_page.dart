@@ -148,13 +148,12 @@ class _LivePageState extends State<LivePage>
                     onSettings: _openSettings,
                   ),
                 ),
-                if (c.profile.mode == CaptureMode.live)
-                  Positioned.fill(
-                    child: DraggablePip(
-                      textureId: c.textureId,
-                      cropCenterX: cropCenterX,
-                    ),
+                Positioned.fill(
+                  child: DraggablePip(
+                    textureId: c.textureId,
+                    cropCenterX: cropCenterX,
                   ),
+                ),
                 Positioned(
                   left: 0,
                   right: 0,

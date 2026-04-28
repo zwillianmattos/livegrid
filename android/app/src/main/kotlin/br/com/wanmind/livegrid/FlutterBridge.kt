@@ -1,5 +1,6 @@
 package br.com.wanmind.livegrid
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.ImageFormat
@@ -7,13 +8,16 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import androidx.annotation.RequiresApi
 import br.com.wanmind.livegrid.camera.CapturePipeline
+import br.com.wanmind.livegrid.encoder.EncoderPool
 import br.com.wanmind.livegrid.encoder.HardwareEncoder
 import br.com.wanmind.livegrid.service.LiveGridForegroundService
 import br.com.wanmind.livegrid.stream.TcpPublisher
@@ -53,6 +57,7 @@ class FlutterBridge(
     private var currentFps = 30
 
     private var activeCameraId: String? = null
+    private var lastRecording: EncoderPool.Output? = null
 
     init {
         control.setMethodCallHandler(this)
@@ -68,6 +73,11 @@ class FlutterBridge(
                 live = false
                 pipeline.stopRecording()
                 stopForegroundService()
+                val pending = lastRecording
+                lastRecording = null
+                if (pending != null) {
+                    Thread({ publishRecording(pending) }, "publish-gallery").start()
+                }
                 result.success(null)
             }
             "switchResolution" -> result.success(null)
@@ -180,6 +190,7 @@ class FlutterBridge(
         }
         if (output != null) {
             live = true
+            lastRecording = if (isRecording) output else null
             val displayHost = when {
                 obsHost.isNotEmpty() -> obsHost
                 else -> localWifiIp() ?: "<IP_DO_CELULAR>"
@@ -194,6 +205,63 @@ class FlutterBridge(
             }
             result.success(payload)
         }
+    }
+
+    private fun publishRecording(output: EncoderPool.Output) {
+        listOfNotNull(output.horizontalFile, output.verticalFile).forEach { file ->
+            try {
+                if (!file.exists() || file.length() == 0L) {
+                    Log.w(TAG, "publishRecording skip ${file.name} exists=${file.exists()} size=${file.length()}")
+                    return@forEach
+                }
+                val uri = publishToGallery(file)
+                if (uri != null) {
+                    file.delete()
+                    Log.i(TAG, "publishRecording moved ${file.name} -> $uri")
+                } else {
+                    Log.w(TAG, "publishRecording failed ${file.name}; kept at ${file.absolutePath}")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "publishRecording ${file.name}: ${t.message}", t)
+            }
+        }
+    }
+
+    private fun publishToGallery(file: File): android.net.Uri? {
+        val resolver = context.contentResolver
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(
+                    MediaStore.Video.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_MOVIES + "/LiveGrid",
+                )
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+        }
+        val uri = resolver.insert(collection, values) ?: return null
+        try {
+            resolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { input -> input.copyTo(out) }
+            } ?: run {
+                resolver.delete(uri, null, null)
+                return null
+            }
+        } catch (t: Throwable) {
+            try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
+            throw t
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val finalize = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            resolver.update(uri, finalize, null, null)
+        }
+        return uri
     }
 
     private fun extractProfile(raw: Map<*, *>?, label: String): HardwareEncoder.Profile? {

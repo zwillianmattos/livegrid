@@ -2,6 +2,7 @@ import AVFoundation
 import Darwin
 import Flutter
 import Foundation
+import Photos
 import UIKit
 
 final class FlutterBridge: NSObject, FlutterStreamHandler {
@@ -296,11 +297,61 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let vRec = verticalRecorder
         horizontalRecorder = nil
         verticalRecorder = nil
-        hRec?.finish { _ in
+        hRec?.finish { url in
+            if let url = url { Self.saveToPhotoLibrary(url: url) }
             _ = hRec
         }
-        vRec?.finish { _ in
+        vRec?.finish { url in
+            if let url = url { Self.saveToPhotoLibrary(url: url) }
             _ = vRec
+        }
+    }
+
+    private static func saveToPhotoLibrary(url: URL) {
+        let perform: () -> Void = {
+            PHPhotoLibrary.shared().performChanges({
+                let req = PHAssetCreationRequest.forAsset()
+                let opts = PHAssetResourceCreationOptions()
+                opts.shouldMoveFile = false
+                req.addResource(with: .video, fileURL: url, options: opts)
+            }) { success, error in
+                if success {
+                    NSLog("Photo library saved \(url.lastPathComponent)")
+                } else {
+                    NSLog("Photo library save failed for \(url.lastPathComponent): \(error?.localizedDescription ?? "?")")
+                }
+            }
+        }
+        let granted: (PHAuthorizationStatus) -> Bool = { status in
+            if status == .authorized { return true }
+            if #available(iOS 14, *), status == .limited { return true }
+            return false
+        }
+        let status: PHAuthorizationStatus
+        if #available(iOS 14, *) {
+            status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        } else {
+            status = PHPhotoLibrary.authorizationStatus()
+        }
+        if granted(status) {
+            perform()
+            return
+        }
+        if status == .notDetermined {
+            let handler: (PHAuthorizationStatus) -> Void = { newStatus in
+                if granted(newStatus) {
+                    perform()
+                } else {
+                    NSLog("Photo library permission denied for \(url.lastPathComponent)")
+                }
+            }
+            if #available(iOS 14, *) {
+                PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: handler)
+            } else {
+                PHPhotoLibrary.requestAuthorization(handler)
+            }
+        } else {
+            NSLog("Photo library permission denied for \(url.lastPathComponent)")
         }
     }
 
