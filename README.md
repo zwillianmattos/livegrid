@@ -189,4 +189,4 @@ A documentação interna detalhada (decisões, dívidas técnicas, contrato de p
 
 ## Licença
 
-Proprietário © Memoot · Willian de Mattos. Todos os direitos reservados.
+Proprietário © Wanmind Innovation. Willian de Mattos. Todos os direitos reservados.
