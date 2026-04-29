@@ -290,13 +290,26 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             case .unspecified: lens = "external"
             @unknown default: lens = "unknown"
             }
-            let dims = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+            var maxW: Int32 = 0
+            var maxH: Int32 = 0
+            for fmt in device.formats {
+                let d = CMVideoFormatDescriptionGetDimensions(fmt.formatDescription)
+                if Int(d.width) * Int(d.height) > Int(maxW) * Int(maxH) {
+                    maxW = d.width
+                    maxH = d.height
+                }
+            }
+            if maxW == 0 {
+                let d = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+                maxW = d.width
+                maxH = d.height
+            }
             return [
                 "id": device.uniqueID,
                 "lens": lens,
                 "label": device.localizedName,
-                "maxWidth": Int(dims.width),
-                "maxHeight": Int(dims.height),
+                "maxWidth": Int(maxW),
+                "maxHeight": Int(maxH),
             ]
         }
     }

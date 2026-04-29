@@ -23,7 +23,7 @@ class TcpPublisher(
     private val muxer = MpegTsMuxer()
     private val running = AtomicBoolean(false)
     private var server: ServerSocket? = null
-    private var client: Socket? = null
+    private val clients = mutableListOf<Socket>()
     private val clientLock = Any()
     private val acceptThread = Executors.newSingleThreadExecutor { r ->
         Thread(r, "tcp-accept-$label").apply { isDaemon = true }
@@ -58,11 +58,12 @@ class TcpPublisher(
                 val sock = s.accept()
                 sock.tcpNoDelay = true
                 runCatching { sock.sendBufferSize = 4 * 1024 * 1024 }
+                val total: Int
                 synchronized(clientLock) {
-                    client?.let { runCatching { it.close() } }
-                    client = sock
+                    clients.add(sock)
+                    total = clients.size
                 }
-                Log.i(TAG, "$label client connected ${sock.inetAddress?.hostAddress}")
+                Log.i(TAG, "$label client connected ${sock.inetAddress?.hostAddress} (total=$total)")
             } catch (t: Throwable) {
                 if (!running.get()) return
                 txErrors.incrementAndGet()
@@ -72,7 +73,10 @@ class TcpPublisher(
     }
 
     fun publish(annexB: ByteArray, ptsUs: Long, isKeyframe: Boolean) {
-        val sock = synchronized(clientLock) { client } ?: return
+        val snapshot: List<Socket> = synchronized(clientLock) {
+            if (clients.isEmpty()) return
+            clients.toList()
+        }
         val packets = muxer.wrapAccessUnit(annexB, ptsUs, isKeyframe)
         val total = packets.size * MpegTsMuxer.PACKET_SIZE
         val combined = ByteArray(total)
@@ -82,22 +86,37 @@ class TcpPublisher(
             offset += MpegTsMuxer.PACKET_SIZE
         }
         writeThread.execute {
-            try {
-                sock.getOutputStream().write(combined)
+            val dead = mutableListOf<Socket>()
+            var anyOk = false
+            for (sock in snapshot) {
+                try {
+                    sock.getOutputStream().write(combined)
+                    anyOk = true
+                } catch (t: Throwable) {
+                    dead.add(sock)
+                    Log.w(TAG, "$label send: ${t.message}, dropping client ${sock.inetAddress?.hostAddress}")
+                }
+            }
+            if (anyOk) {
                 txDatagrams.incrementAndGet()
                 txBytes.addAndGet(total.toLong())
-            } catch (t: Throwable) {
-                txErrors.incrementAndGet()
-                Log.w(TAG, "$label send: ${t.message}, dropping client")
-                disconnectClient()
+            }
+            if (dead.isNotEmpty()) {
+                txErrors.addAndGet(dead.size.toLong())
+                synchronized(clientLock) {
+                    for (s in dead) {
+                        clients.remove(s)
+                        runCatching { s.close() }
+                    }
+                }
             }
         }
     }
 
-    private fun disconnectClient() {
+    private fun disconnectAllClients() {
         synchronized(clientLock) {
-            client?.let { runCatching { it.close() } }
-            client = null
+            for (s in clients) runCatching { s.close() }
+            clients.clear()
         }
     }
 
@@ -111,7 +130,7 @@ class TcpPublisher(
         if (!running.getAndSet(false)) return
         runCatching { server?.close() }
         server = null
-        disconnectClient()
+        disconnectAllClients()
         acceptThread.shutdownNow()
         writeThread.shutdownNow()
     }

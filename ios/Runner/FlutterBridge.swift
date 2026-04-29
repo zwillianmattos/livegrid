@@ -66,6 +66,25 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             stopAllOutputs()
             result(nil)
         case "switchResolution":
+            if let args = call.arguments as? [String: Any],
+               let w = args["width"] as? Int,
+               let h = args["height"] as? Int,
+               let p = preview {
+                if w == p.captureWidth && h == p.captureHeight {
+                    result(nil)
+                    return
+                }
+                do {
+                    try p.start(cameraId: activeCameraId, captureWidth: w, captureHeight: h)
+                    horizontalEncoder?.requestKeyframe()
+                    verticalEncoder?.requestKeyframe()
+                    NSLog("switchResolution applied \(w)x\(h)")
+                } catch {
+                    NSLog("switchResolution failed: \(error.localizedDescription)")
+                    result(FlutterError(code: "switch_resolution", message: error.localizedDescription, details: nil))
+                    return
+                }
+            }
             result(nil)
         case "setBitrate":
             if let args = call.arguments as? [String: Any] {
@@ -394,6 +413,9 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let hBps = dt > 0 ? Int(Double(h * 8) / dt) : 0
         let vBps = dt > 0 ? Int(Double(v * 8) / dt) : 0
 
+        let hSnap = horizontalPublisher?.snapshot()
+        let vSnap = verticalPublisher?.snapshot()
+
         let payload: [String: Any] = [
             "bitrateA": isLive ? hBps : 0,
             "bitrateB": isLive ? vBps : 0,
@@ -402,6 +424,12 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             "thermalStatus": currentThermalStatus(),
             "srtRtt": 0.0,
             "srtLoss": 0.0,
+            "txDatagramsA": hSnap?.datagrams ?? 0,
+            "txBytesA": hSnap?.bytes ?? 0,
+            "txErrorsA": hSnap?.errors ?? 0,
+            "txDatagramsB": vSnap?.datagrams ?? 0,
+            "txBytesB": vSnap?.bytes ?? 0,
+            "txErrorsB": vSnap?.errors ?? 0,
             "timestampMs": Int(Date().timeIntervalSince1970 * 1000),
         ]
         sink(payload)
@@ -410,7 +438,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
     private func currentThermalStatus() -> Int {
         switch ProcessInfo.processInfo.thermalState {
         case .nominal: return 0
-        case .fair: return 1
+        case .fair: return 2
         case .serious: return 3
         case .critical: return 4
         @unknown default: return 0

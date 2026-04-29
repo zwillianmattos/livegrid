@@ -5,16 +5,34 @@ import 'package:livegrid/app/models/thermal_status.dart';
 
 void main() {
   group('CaptureResolution', () {
-    test('4032x3024 cobre 1080p vertical', () {
-      expect(CaptureResolution.uhd4032x3024.coversVertical1080p, isTrue);
+    test('quality (4K) cobre 1080p vertical', () {
+      expect(CaptureResolution.quality.coversVertical1080p, isTrue);
     });
 
-    test('3840x2160 cobre 1080p vertical', () {
-      expect(CaptureResolution.uhd3840x2160.coversVertical1080p, isTrue);
+    test('balanced (1080p) NÃO cobre 1080p vertical', () {
+      expect(CaptureResolution.balanced.coversVertical1080p, isFalse);
     });
 
-    test('2880x2160 cobre 1080p vertical', () {
-      expect(CaptureResolution.fhd2880x2160.coversVertical1080p, isTrue);
+    test('economic (720p) NÃO cobre 1080p vertical', () {
+      expect(CaptureResolution.economic.coversVertical1080p, isFalse);
+    });
+
+    test('thermalHint reflete o esforço esperado', () {
+      expect(CaptureResolution.economic.thermalHint, ThermalHint.cool);
+      expect(CaptureResolution.balanced.thermalHint, ThermalHint.normal);
+      expect(CaptureResolution.quality.thermalHint, ThermalHint.hot);
+    });
+
+    test('defaultHorizontalEncoder acompanha a captura', () {
+      expect(CaptureResolution.economic.defaultHorizontalEncoder.height, 720);
+      expect(CaptureResolution.balanced.defaultHorizontalEncoder.height, 1080);
+      expect(CaptureResolution.quality.defaultHorizontalEncoder.height, 1080);
+    });
+
+    test('defaultVerticalEncoder = crop nativo', () {
+      final v = CaptureResolution.balanced.defaultVerticalEncoder;
+      expect(v.width, CaptureResolution.balanced.verticalCropWidth);
+      expect(v.height, CaptureResolution.balanced.verticalCropHeight);
     });
   });
 

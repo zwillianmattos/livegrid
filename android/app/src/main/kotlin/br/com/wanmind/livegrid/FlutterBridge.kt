@@ -80,7 +80,7 @@ class FlutterBridge(
                 }
                 result.success(null)
             }
-            "switchResolution" -> result.success(null)
+            "switchResolution" -> handleSwitchResolution(call, result)
             "setBitrate" -> {
                 call.argument<Int>("horizontalBps")?.let { pipeline.setHorizontalBitrate(it) }
                 call.argument<Int>("verticalBps")?.let { pipeline.setVerticalBitrate(it) }
@@ -154,18 +154,17 @@ class FlutterBridge(
 
         val mode = (profile?.get("mode") as? String) ?: "live"
         val isRecording = mode == "recording"
-        val wantsHorizontal = true
-        val wantsVertical = isRecording
 
-        val hProfile: HardwareEncoder.Profile? = extractProfile(
+        val hProfile: HardwareEncoder.Profile = extractProfile(
             profile?.get("horizontal") as? Map<*, *>, "H"
         ) ?: return result.error("bad_profile", "horizontal inválido", null)
-        val vProfile: HardwareEncoder.Profile? = if (wantsVertical) {
+
+        val vProfile: HardwareEncoder.Profile? = if (isRecording) {
             extractProfile(profile?.get("vertical") as? Map<*, *>, "V")
                 ?: return result.error("bad_profile", "vertical inválido", null)
         } else null
 
-        currentFps = hProfile?.fps ?: vProfile?.fps ?: currentFps
+        currentFps = hProfile.fps
 
         val cropCenterX = (profile?.get("verticalCropCenterX") as? Number)?.toFloat() ?: 0.5f
         pipeline.setVerticalCropCenter(cropCenterX)
@@ -205,6 +204,35 @@ class FlutterBridge(
             }
             result.success(payload)
         }
+    }
+
+    private fun handleSwitchResolution(call: MethodCall, result: MethodChannel.Result) {
+        val w = (call.argument<Any>("width") as? Number)?.toInt()
+        val h = (call.argument<Any>("height") as? Number)?.toInt()
+        if (w == null || h == null) {
+            result.success(null)
+            return
+        }
+        if (w == pipeline.captureWidth && h == pipeline.captureHeight) {
+            result.success(null)
+            return
+        }
+        if (live) {
+            Log.w(TAG, "switchResolution durante live: parando encoders e reiniciando preview $w x $h")
+            pipeline.stopRecording()
+            live = false
+            stopForegroundService()
+        }
+        pipeline.stopAll()
+        pipeline.startPreview(
+            cameraId = activeCameraId,
+            previewWidth = PREVIEW_WIDTH,
+            previewHeight = PREVIEW_HEIGHT,
+            captureWidth = w,
+            captureHeight = h,
+            onError = { msg -> Log.w(TAG, "switchResolution preview error: $msg") },
+        )
+        result.success(null)
     }
 
     private fun publishRecording(output: EncoderPool.Output) {

@@ -10,14 +10,11 @@ class ResolutionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final q = resolution.verticalQuality;
-    final cropW = resolution.verticalCropWidth;
-    final cropH = resolution.verticalCropHeight;
-    final qColor = switch (q) {
-      VerticalQuality.pristine => AppColors.safe,
-      VerticalQuality.fullHd => AppColors.safe,
-      VerticalQuality.reduced => AppColors.warn,
-      VerticalQuality.sub => AppColors.live,
+    final thermal = resolution.thermalHint;
+    final thermalColor = switch (thermal) {
+      ThermalHint.cool => AppColors.safe,
+      ThermalHint.normal => AppColors.safe,
+      ThermalHint.hot => AppColors.warn,
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -29,19 +26,28 @@ class ResolutionRow extends StatelessWidget {
         title: Row(
           children: [
             Text(
-              '${resolution.width} × ${resolution.height}',
+              resolution.label,
               style: const TextStyle(
                 color: AppColors.text,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
                 fontSize: 13,
               ),
             ),
             const SizedBox(width: 8),
-            _QualityBadge(label: q.label, color: qColor),
+            Text(
+              '${resolution.width} × ${resolution.height}',
+              style: const TextStyle(
+                color: AppColors.textSubtle,
+                fontWeight: FontWeight.w500,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _Badge(label: thermal.label, color: thermalColor),
           ],
         ),
         subtitle: Text(
-          'Vertical: $cropW × $cropH · ${q.description}',
+          resolution.summary,
           style: const TextStyle(color: AppColors.textSubtle, fontSize: 11),
         ),
       ),
@@ -49,8 +55,8 @@ class ResolutionRow extends StatelessWidget {
   }
 }
 
-class _QualityBadge extends StatelessWidget {
-  const _QualityBadge({required this.label, required this.color});
+class _Badge extends StatelessWidget {
+  const _Badge({required this.label, required this.color});
 
   final String label;
   final Color color;

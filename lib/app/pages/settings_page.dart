@@ -214,7 +214,12 @@ class _SettingsPageState extends State<SettingsPage>
     return RadioGroup<CaptureResolution>(
       groupValue: _capture,
       onChanged: (v) {
-        if (v != null) setState(() => _capture = v);
+        if (v == null || v == _capture) return;
+        setState(() {
+          _capture = v;
+          _horizontalKbps = v.defaultHorizontalEncoder.bitrateBps ~/ 1000;
+          _verticalKbps = v.defaultVerticalEncoder.bitrateBps ~/ 1000;
+        });
       },
       child: Column(
         children: [
@@ -226,6 +231,7 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _networkBody() {
+    final isRecording = _mode == CaptureMode.recording;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -251,16 +257,18 @@ class _SettingsPageState extends State<SettingsPage>
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _vPortCtrl,
-                decoration: const InputDecoration(labelText: 'Porta V'),
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: AppColors.text, fontSize: 13),
-                onChanged: (_) => setState(() {}),
+            if (isRecording) ...[
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _vPortCtrl,
+                  decoration: const InputDecoration(labelText: 'Porta V'),
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(color: AppColors.text, fontSize: 13),
+                  onChanged: (_) => setState(() {}),
+                ),
               ),
-            ),
+            ],
           ],
         ),
         if (_obsHostCtrl.text.trim().isNotEmpty) ...[
@@ -268,7 +276,7 @@ class _SettingsPageState extends State<SettingsPage>
           _UrlPreviewBlock(
             host: _obsHostCtrl.text.trim(),
             hPort: _hPortCtrl.text,
-            vPort: _vPortCtrl.text,
+            vPort: isRecording ? _vPortCtrl.text : null,
           ),
         ],
       ],
@@ -337,11 +345,13 @@ class _SettingsPageState extends State<SettingsPage>
 
   void _save() {
     final p = widget.controller.profile;
+    final hDefault = _capture.defaultHorizontalEncoder;
+    final vDefault = _capture.defaultVerticalEncoder;
     widget.controller.updateProfile(
       p.copyWith(
         capture: _capture,
-        horizontal: p.horizontal.copyWith(bitrateBps: _horizontalKbps * 1000),
-        vertical: p.vertical.copyWith(bitrateBps: _verticalKbps * 1000),
+        horizontal: hDefault.copyWith(bitrateBps: _horizontalKbps * 1000),
+        vertical: vDefault.copyWith(bitrateBps: _verticalKbps * 1000),
         cameraId: _cameraId,
         mode: _mode,
       ),
@@ -403,12 +413,12 @@ class _UrlPreviewBlock extends StatelessWidget {
   const _UrlPreviewBlock({
     required this.host,
     required this.hPort,
-    required this.vPort,
+    this.vPort,
   });
 
   final String host;
   final String hPort;
-  final String vPort;
+  final String? vPort;
 
   @override
   Widget build(BuildContext context) {
@@ -421,8 +431,10 @@ class _UrlPreviewBlock extends StatelessWidget {
       child: Column(
         children: [
           UrlPreview(label: 'HORIZONTAL', url: 'tcp://$host:$hPort'),
-          const SizedBox(height: 6),
-          UrlPreview(label: 'VERTICAL', url: 'tcp://$host:$vPort'),
+          if (vPort != null) ...[
+            const SizedBox(height: 6),
+            UrlPreview(label: 'VERTICAL', url: 'tcp://$host:$vPort'),
+          ],
         ],
       ),
     );

@@ -101,9 +101,22 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateProfile(SessionProfile profile) {
+  Future<void> updateProfile(SessionProfile profile) async {
+    final prev = _profile;
     _profile = profile;
     notifyListeners();
+    if (!isLive) return;
+    if (prev.capture != profile.capture) {
+      await _bridge.switchResolution(profile.capture);
+    }
+    final hChanged = prev.horizontal.bitrateBps != profile.horizontal.bitrateBps;
+    final vChanged = prev.vertical.bitrateBps != profile.vertical.bitrateBps;
+    if (hChanged || vChanged) {
+      await _bridge.setBitrate(
+        horizontalBps: hChanged ? profile.horizontal.bitrateBps : null,
+        verticalBps: vChanged ? profile.vertical.bitrateBps : null,
+      );
+    }
   }
 
   void updateNetwork(NetworkProfile network) {

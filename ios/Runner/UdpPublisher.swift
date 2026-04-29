@@ -3,15 +3,31 @@ import Foundation
 
 final class TcpPublisher {
 
+    struct Snapshot {
+        let datagrams: Int64
+        let bytes: Int64
+        let errors: Int64
+    }
+
     private let port: UInt16
     private let label: String
     private let acceptQueue: DispatchQueue
     private let writeQueue: DispatchQueue
     private let muxer = MpegTsMuxer()
     private var listenFd: Int32 = -1
-    private var clientFd: Int32 = -1
-    private let clientLock = NSLock()
+    private var clientFds: [Int32] = []
     private var running = false
+
+    private let counterLock = NSLock()
+    private var txDatagrams: Int64 = 0
+    private var txBytes: Int64 = 0
+    private var txErrors: Int64 = 0
+
+    func snapshot() -> Snapshot {
+        counterLock.lock()
+        defer { counterLock.unlock() }
+        return Snapshot(datagrams: txDatagrams, bytes: txBytes, errors: txErrors)
+    }
 
     init(port: Int, label: String) {
         self.port = UInt16(port)
@@ -49,7 +65,7 @@ final class TcpPublisher {
             Darwin.close(fd)
             return
         }
-        guard Darwin.listen(fd, 1) == 0 else {
+        guard Darwin.listen(fd, 8) == 0 else {
             NSLog("TcpPublisher[\(label)] listen failed errno=\(errno)")
             Darwin.close(fd)
             return
@@ -86,53 +102,71 @@ final class TcpPublisher {
             var sndBuf: Int32 = 4 * 1024 * 1024
             setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &sndBuf, socklen_t(MemoryLayout<Int32>.size))
 
-            clientLock.lock()
-            if clientFd >= 0 {
-                Darwin.close(clientFd)
+            let newFd = cfd
+            let label = self.label
+            writeQueue.async { [weak self] in
+                guard let self = self else { Darwin.close(newFd); return }
+                self.clientFds.append(newFd)
+                NSLog("TcpPublisher[\(label)] client connected (total=\(self.clientFds.count))")
             }
-            clientFd = cfd
-            clientLock.unlock()
-            NSLog("TcpPublisher[\(label)] client connected")
         }
     }
 
     func publish(annexB: Data, ptsUs: Int64, isKeyframe: Bool) {
-        clientLock.lock()
-        let fd = clientFd
-        clientLock.unlock()
-        guard fd >= 0 else { return }
-
         let packets = muxer.wrapAccessUnit(payload: annexB, ptsUs: ptsUs, isKeyframe: isKeyframe)
         var combined = Data(capacity: packets.count * MpegTsMuxer.packetSize)
         for p in packets { combined.append(p) }
 
         let label = self.label
         writeQueue.async { [weak self] in
+            guard let self = self else { return }
+            if self.clientFds.isEmpty { return }
+
             let total = combined.count
-            var offset = 0
+            var stillAlive: [Int32] = []
+            stillAlive.reserveCapacity(self.clientFds.count)
+            var anyOk = false
+            var droppedCount = 0
+
             combined.withUnsafeBytes { raw in
                 guard let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                while offset < total {
-                    let sent = Darwin.send(fd, base.advanced(by: offset), total - offset, 0)
-                    if sent <= 0 {
-                        if sent < 0, errno == EINTR { continue }
-                        NSLog("TcpPublisher[\(label)] send failed errno=\(errno), dropping client")
-                        self?.disconnectClient()
-                        return
+                for fd in self.clientFds {
+                    var offset = 0
+                    var failed = false
+                    while offset < total {
+                        let sent = Darwin.send(fd, base.advanced(by: offset), total - offset, 0)
+                        if sent <= 0 {
+                            if sent < 0, errno == EINTR { continue }
+                            failed = true
+                            break
+                        }
+                        offset += sent
                     }
-                    offset += sent
+                    if failed {
+                        Darwin.close(fd)
+                        droppedCount += 1
+                    } else {
+                        stillAlive.append(fd)
+                        anyOk = true
+                    }
                 }
             }
-        }
-    }
 
-    private func disconnectClient() {
-        clientLock.lock()
-        if clientFd >= 0 {
-            Darwin.close(clientFd)
-            clientFd = -1
+            if droppedCount > 0 {
+                NSLog("TcpPublisher[\(label)] dropped \(droppedCount) client(s), \(stillAlive.count) remaining")
+            }
+            self.clientFds = stillAlive
+
+            self.counterLock.lock()
+            if anyOk {
+                self.txDatagrams &+= 1
+                self.txBytes &+= Int64(total)
+            }
+            if droppedCount > 0 {
+                self.txErrors &+= Int64(droppedCount)
+            }
+            self.counterLock.unlock()
         }
-        clientLock.unlock()
     }
 
     func close() {
@@ -140,6 +174,10 @@ final class TcpPublisher {
         let lfd = listenFd
         listenFd = -1
         if lfd >= 0 { Darwin.close(lfd) }
-        disconnectClient()
+        writeQueue.async { [weak self] in
+            guard let self = self else { return }
+            for fd in self.clientFds { Darwin.close(fd) }
+            self.clientFds.removeAll()
+        }
     }
 }
