@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import '../constants/crop.dart';
 import '../controllers/session_controller.dart';
 import '../models/resolution_profile.dart';
+import '../models/session_state.dart';
 import '../theme/page_routes.dart';
 import '../widgets/atoms/blur_icon_button.dart';
 import '../widgets/live/crop_panel.dart';
 import '../widgets/live/draggable_pip.dart';
 import '../widgets/live/error_bubble.dart';
+import '../widgets/live/exposure_control.dart';
 import '../widgets/live/fullscreen_preview.dart';
+import '../widgets/live/quick_controls.dart';
 import '../widgets/live/record_button.dart';
 import '../widgets/live/top_chrome.dart';
 import 'settings_page.dart';
@@ -74,6 +77,22 @@ class _LivePageState extends State<LivePage>
   }
 
   void _toggleGrid() => setState(() => _showGrid = !_showGrid);
+
+  void _cycleCamera() {
+    final cams = widget.controller.cameras;
+    if (cams.length < 2) return;
+    final current = widget.controller.selectedCamera;
+    final idx = cams.indexWhere((c) => c.id == current?.id);
+    final next = cams[(idx + 1) % cams.length];
+    widget.controller.selectCamera(next.id);
+  }
+
+  void _cycleResolution() {
+    final values = CaptureResolution.values;
+    final idx = values.indexOf(widget.controller.profile.capture);
+    final next = values[(idx + 1) % values.length];
+    widget.controller.switchCapture(next);
+  }
 
   void _openSettings() {
     Navigator.of(
@@ -141,7 +160,6 @@ class _LivePageState extends State<LivePage>
                   child: TopChrome(
                     state: c.state,
                     stats: c.stats,
-                    wifiBand: c.wifiBand,
                     liveStartedAt: _liveStartedAt,
                     configure: _configureMode,
                     onConfigure: _cropEditEnabled ? _toggleConfigure : null,
@@ -154,6 +172,18 @@ class _LivePageState extends State<LivePage>
                     cropCenterX: cropCenterX,
                   ),
                 ),
+                if (c.state == SessionState.idle)
+                  Positioned(
+                    left: 16,
+                    bottom: 64,
+                    child: QuickControls(
+                      cameras: c.cameras,
+                      selectedCamera: c.selectedCamera,
+                      resolution: c.profile.capture,
+                      onCameraTap: _cycleCamera,
+                      onResolutionTap: _cycleResolution,
+                    ),
+                  ),
                 Positioned(
                   left: 0,
                   right: 0,
@@ -191,6 +221,34 @@ class _LivePageState extends State<LivePage>
                     active: _showGrid,
                     tooltip: 'Grade (rule of thirds)',
                     onPressed: _toggleGrid,
+                  ),
+                ),
+                Positioned(
+                  left: 16,
+                  bottom: 16,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (c.capabilities.hasFlash)
+                        BlurIconButton(
+                          icon: c.torchEnabled
+                              ? Icons.flash_on
+                              : Icons.flash_off,
+                          active: c.torchEnabled,
+                          tooltip: 'Flash',
+                          onPressed: c.toggleTorch,
+                        ),
+                      if (c.capabilities.hasExposureControl) ...[
+                        const SizedBox(width: 8),
+                        ExposureControl(
+                          value: c.exposureValue,
+                          min: c.capabilities.exposureMin,
+                          max: c.capabilities.exposureMax,
+                          stepEv: c.capabilities.exposureStepEv,
+                          onChanged: c.setExposure,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 if (c.errorMessage != null)

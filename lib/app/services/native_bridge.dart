@@ -84,6 +84,42 @@ class NativeBridge {
     }
   }
 
+  Future<void> switchCamera(String cameraId) async {
+    try {
+      await _control.invokeMethod<void>('switchCamera', {'cameraId': cameraId});
+    } on MissingPluginException {
+      return;
+    }
+  }
+
+  Future<void> setTorch(bool enabled) async {
+    try {
+      await _control.invokeMethod<void>('setTorch', {'enabled': enabled});
+    } on MissingPluginException {
+      return;
+    }
+  }
+
+  Future<void> setExposure(int value) async {
+    try {
+      await _control.invokeMethod<void>('setExposure', {'value': value});
+    } on MissingPluginException {
+      return;
+    }
+  }
+
+  Future<CameraCapabilities> cameraCapabilities() async {
+    try {
+      final raw = await _control.invokeMethod<Object?>('cameraCapabilities');
+      final map = (raw is Map)
+          ? raw.cast<Object?, Object?>()
+          : const <Object?, Object?>{};
+      return CameraCapabilities.fromMap(map);
+    } on MissingPluginException {
+      return CameraCapabilities.none;
+    }
+  }
+
   Future<String?> deviceIp() async {
     try {
       return await _control.invokeMethod<String>('deviceIp');
@@ -109,6 +145,38 @@ class NativeBridge {
       final map = (event as Map).cast<Object?, Object?>();
       return StreamStats.fromMap(map);
     });
+  }
+}
+
+class CameraCapabilities {
+  const CameraCapabilities({
+    required this.hasFlash,
+    required this.exposureMin,
+    required this.exposureMax,
+    required this.exposureStepEv,
+  });
+
+  final bool hasFlash;
+  final int exposureMin;
+  final int exposureMax;
+  final double exposureStepEv;
+
+  bool get hasExposureControl => exposureMax > exposureMin;
+
+  static const none = CameraCapabilities(
+    hasFlash: false,
+    exposureMin: 0,
+    exposureMax: 0,
+    exposureStepEv: 0,
+  );
+
+  static CameraCapabilities fromMap(Map<Object?, Object?> map) {
+    return CameraCapabilities(
+      hasFlash: map['hasFlash'] as bool? ?? false,
+      exposureMin: (map['exposureMin'] as num?)?.toInt() ?? 0,
+      exposureMax: (map['exposureMax'] as num?)?.toInt() ?? 0,
+      exposureStepEv: (map['exposureStepEv'] as num?)?.toDouble() ?? 0,
+    );
   }
 }
 

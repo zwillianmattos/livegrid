@@ -81,6 +81,7 @@ class FlutterBridge(
                 result.success(null)
             }
             "switchResolution" -> handleSwitchResolution(call, result)
+            "switchCamera" -> handleSwitchCamera(call, result)
             "setBitrate" -> {
                 call.argument<Int>("horizontalBps")?.let { pipeline.setHorizontalBitrate(it) }
                 call.argument<Int>("verticalBps")?.let { pipeline.setVerticalBitrate(it) }
@@ -106,6 +107,17 @@ class FlutterBridge(
             }
             "wifiBand" -> result.success(currentWifiBand())
             "deviceIp" -> result.success(localWifiIp())
+            "setTorch" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: false
+                pipeline.setTorch(enabled)
+                result.success(null)
+            }
+            "setExposure" -> {
+                val value = call.argument<Int>("value")
+                if (value != null) pipeline.setExposureCompensation(value)
+                result.success(null)
+            }
+            "cameraCapabilities" -> result.success(cameraCapabilities())
             else -> result.notImplemented()
         }
     }
@@ -235,6 +247,33 @@ class FlutterBridge(
         result.success(null)
     }
 
+    private fun handleSwitchCamera(call: MethodCall, result: MethodChannel.Result) {
+        val cameraId = call.argument<String>("cameraId")
+        if (cameraId.isNullOrBlank() || cameraId == activeCameraId) {
+            result.success(null)
+            return
+        }
+        if (live) {
+            Log.w(TAG, "switchCamera durante live: parando encoders e reiniciando preview $cameraId")
+            pipeline.stopRecording()
+            live = false
+            stopForegroundService()
+        }
+        activeCameraId = cameraId
+        val w = pipeline.captureWidth
+        val h = pipeline.captureHeight
+        pipeline.stopAll()
+        pipeline.startPreview(
+            cameraId = activeCameraId,
+            previewWidth = PREVIEW_WIDTH,
+            previewHeight = PREVIEW_HEIGHT,
+            captureWidth = w,
+            captureHeight = h,
+            onError = { msg -> Log.w(TAG, "switchCamera preview error: $msg") },
+        )
+        result.success(null)
+    }
+
     private fun publishRecording(output: EncoderPool.Output) {
         listOfNotNull(output.horizontalFile, output.verticalFile).forEach { file ->
             try {
@@ -292,6 +331,16 @@ class FlutterBridge(
         return uri
     }
 
+    private fun cameraCapabilities(): Map<String, Any?> {
+        val caps = pipeline.capabilities
+        return mapOf(
+            "hasFlash" to (caps?.hasFlash ?: false),
+            "exposureMin" to (caps?.exposureMin ?: 0),
+            "exposureMax" to (caps?.exposureMax ?: 0),
+            "exposureStepEv" to (caps?.exposureStepEv ?: 0.0),
+        )
+    }
+
     private fun extractProfile(raw: Map<*, *>?, label: String): HardwareEncoder.Profile? {
         raw ?: return null
         val w = (raw["width"] as? Number)?.toInt() ?: return null
@@ -342,6 +391,7 @@ class FlutterBridge(
                 "txDatagramsB" to (vSnap?.datagrams ?: 0L),
                 "txBytesB" to (vSnap?.bytes ?: 0L),
                 "txErrorsB" to (vSnap?.errors ?: 0L),
+                "audioLevel" to (if (live) pipeline.audioLevel().toDouble() else 0.0),
                 "timestampMs" to System.currentTimeMillis(),
             )
             eventSink?.success(payload)

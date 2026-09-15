@@ -8,6 +8,8 @@ Guia pra Claude Code trabalhar nesse repo. **Reflete o estado real do código** 
 
 Objetivo de produto: a partir de uma única câmera traseira, entregar **um feed horizontal 16:9 ao vivo** pro OBS via TCP+MPEG-TS, e (em modo gravação) **dois MP4 simultâneos** (16:9 + crop 9:16) salvos na galeria do celular.
 
+**Foco atual (Set/2026):** a UI foi redirecionada pra **story makers** — usuários que só querem gravar 16:9 + 9:16 pro celular, sem OBS. O modo `live`/OBS continua implementado no nativo (Swift/Kotlin) mas **está oculto na UI Flutter**: sem seletor de modo, sem aba "Rede", perfil sempre inicia em `CaptureMode.recording`. É feature futura hibernada, não removida — não apagar o código nativo de streaming ao reativar isso.
+
 Stack: Flutter (UI/controle) + iOS nativo (Swift/AVFoundation/VideoToolbox) + Android nativo (Kotlin/Camera2/MediaCodec/OpenGL). SDK Dart `^3.11.5`. iOS e Android estão **ambos implementados** com paridade funcional.
 
 ## Estado atual (real)
@@ -16,6 +18,7 @@ Stack: Flutter (UI/controle) + iOS nativo (Swift/AVFoundation/VideoToolbox) + An
 - **Bridge:** `MethodChannel('livegrid/control')` + `EventChannel('livegrid/stats')`. Stats a 2 Hz. Preview por `Texture(textureId)`.
 - **Modos:** `live` (TCP horizontal) e `recording` (dois MP4 locais — horizontal + crop 9:16 — auto-publicados na galeria via PHPhotoLibrary / MediaStore).
 - **Encoder:** H.264 hardware (VideoToolbox no iOS, MediaCodec no Android). CBR, B-frames=0, GOP=fps (1s), `KEY_LATENCY=1` no Android, `RealTime=true` no iOS. iOS usa Baseline (live) / High (recording); Android usa Main com fallback Baseline.
+- **Áudio:** implementado **só no Android**, só no caminho de gravação MP4 (`AudioRecord` PCM 44.1kHz mono → `MediaCodec` AAC-LC 128kbps → `MediaMuxer.addTrack` nos dois arquivos, H e V, via `encoder/AudioEncoder.kt`). Nível RMS (0..1) sai em `audioLevel` no stats channel. Se o mic falhar ao iniciar, grava mudo sem travar (fallback silencioso); se o formato AAC demorar mais que 1.5s pra chegar, o muxer arranca sem áudio (`HardwareEncoder.AUDIO_WAIT_TIMEOUT_MS`). **iOS não captura áudio** — `FileRecorder.swift` só tem um `AVAssetWriterInput` de vídeo; gravações iOS continuam mudas (dívida, ver tabela de bugs).
 - **Estabilização:** desligada em ambas as plataformas (`preferredVideoStabilizationMode = .off` no iOS, sem flag no Android).
 - **Foreground service Android:** `LiveGridForegroundService` é iniciado/parado em `start`/`stop`. Tipos no manifest precisam ser checados se for mexer.
 - **Política térmica:** `SessionController._applyThermalPolicy` reduz bitrate / fps / corta vertical conforme `ThermalStatus`.
@@ -68,15 +71,25 @@ lib/
       stream_stats.dart
       thermal_status.dart
     pages/
-      live_page.dart                # tela principal full-screen
-      settings_page.dart            # 4 abas: Câmera, Captura, Rede, Qualidade
+      live_page.dart                # tela principal full-screen. Câmera (lente) e
+                                    # Resolução viraram chips rápidos (QuickControls)
+                                    # aqui, visíveis só em SessionState.idle. Também
+                                    # tem torch (flash) + ExposureControl (Android).
+      settings_page.dart            # sem abas — só corpo de "Qualidade":
+                                    # bitrate H/V + FPS da câmera. Câmera/Captura/Rede
+                                    # e seletor LIVE/GRAVAÇÃO saíram daqui (ver acima
+                                    # e "Foco atual" — Rede/modo são feature hibernada,
+                                    # Câmera/Captura viraram QuickControls no LivePage).
     services/native_bridge.dart     # MethodChannel typed wrapper
     theme/{app_theme,page_routes}.dart
     widgets/
       atoms/{blur_icon_button,blur_pill,separator_dot,status_dot}.dart
-      live/{crop_panel,draggable_pip,error_bubble,fullscreen_preview,
-            record_button,test_pattern,top_chrome}.dart
-      settings/{resolution_row,slider_row,url_preview}.dart
+      live/{crop_panel,draggable_pip,error_bubble,exposure_control,
+            fullscreen_preview,quick_controls,record_button,test_pattern,
+            top_chrome}.dart
+      settings/{slider_row}.dart     # resolution_row.dart e url_preview.dart ainda
+                                    # existem no disco mas não são mais importados
+                                    # em lugar nenhum (dívida de Rede/Captura hibernadas)
 
 ios/Runner/
   AppDelegate.swift / SceneDelegate.swift
@@ -92,7 +105,7 @@ android/app/src/main/kotlin/br/com/wanmind/livegrid/
   FlutterBridge.kt
   camera/{OpenGateCamera,CapturePipeline,GlRenderer,GlCore,
           WindowSurface,GlUtils}.kt
-  encoder/{HardwareEncoder,EncoderPool,MpegTsMuxer,BitrateMeter}.kt
+  encoder/{HardwareEncoder,EncoderPool,MpegTsMuxer,BitrateMeter,AudioEncoder}.kt
   stream/TcpPublisher.kt
   service/LiveGridForegroundService.kt
 ```
@@ -107,11 +120,15 @@ android/app/src/main/kotlin/br/com/wanmind/livegrid/
 | `listCameras` | — | `List<{id,lens,label,maxWidth,maxHeight}>` |
 | `startCapture` | `{profile, network}` | `{horizontalUrl}` (live) ou `{horizontalFile, verticalFile}` (recording) |
 | `stop` | — | `null` |
-| `switchResolution` | `{width,height}` | `null` — **iOS reconfigura sessão; Android é NO-OP (bug)** |
+| `switchResolution` | `{width,height}` | `null` — iOS e Android reconfiguram sessão (para encoders se `live`, reinicia preview) |
+| `switchCamera` | `{cameraId}` | `null` — **só Android** (`FlutterBridge.handleSwitchCamera`); troca lente em runtime reiniciando preview, preserva captureWidth/Height atual. iOS não implementa. |
 | `setBitrate` | `{horizontalBps?, verticalBps?}` | `null` |
-| `setFrameRate` | `{fps}` | `null` |
+| `setFrameRate` | `{fps}` | `null` — **Android também aplica ao `CONTROL_AE_TARGET_FPS_RANGE` da câmera**, não só ao encoder. iOS só ajusta encoder. |
 | `requestKeyframe` | — | `null` |
 | `setVerticalCrop` | `{centerX: 0..1}` | `null` |
+| `setTorch` | `{enabled: bool}` | `null` — **só Android** (`OpenGateCamera.setTorch`); iOS não implementa (MissingPluginException engolida no Dart). |
+| `setExposure` | `{value: int}` | `null` — **só Android**, valor em passos de `CONTROL_AE_EXPOSURE_COMPENSATION` (ver `cameraCapabilities` pro range). iOS não implementa. |
+| `cameraCapabilities` | — | `{hasFlash, exposureMin, exposureMax, exposureStepEv}` — **só Android**; iOS sempre volta tudo zerado/false (MissingPluginException). |
 | `wifiBand` | — | `"2.4"` \| `"5"` \| `"unknown"` |
 | `deviceIp` | — | `String?` (IP local da Wi-Fi) |
 
@@ -121,6 +138,7 @@ android/app/src/main/kotlin/br/com/wanmind/livegrid/
   srtRtt, srtLoss,                                    // sempre 0 (legado)
   txDatagramsA, txBytesA, txErrorsA,                  // só Android — iOS não emite
   txDatagramsB, txBytesB, txErrorsB,
+  audioLevel,                                         // 0..1 RMS. Só Android — iOS sempre 0 (sem captura de áudio)
   timestampMs }
 ```
 
@@ -189,14 +207,15 @@ Cada bug abaixo foi confirmado lendo o código. Antes de "corrigir" qualquer um,
 
 | # | Onde | Bug | Sintoma |
 |---|---|---|---|
-| 1 | `lib/app/pages/settings_page.dart:_save` | Trocar perfil de captura (Econômico/Equilibrado/Qualidade) **só muda `CaptureResolution`**, mas `EncoderProfile.horizontal1080p` é fixo em `1920×1080@4 Mbps` em `lib/app/models/resolution_profile.dart`. Encoder upscala 720p→1080p ou downscala 4K→1080p sem refletir a escolha do menu. | Em "Econômico" o stream parece "cortar" pq VideoToolbox/MediaCodec está sob carga de scale com bitrate desalinhado. |
-| 2 | `android/.../FlutterBridge.kt:83` | `switchResolution` é `result.success(null)` — NO-OP. | No Android, mudar resolução com live ativo não tem efeito. |
-| 3 | `ios/Runner/FlutterBridge.swift:handleStartLive` & `android/.../FlutterBridge.kt:wantsVertical=isRecording` | Em modo **live**, vertical **não é publicado**, só horizontal. UI mostra "Porta V" e dois URLs em `_UrlPreviewBlock`. | UI promete dois feeds, app entrega um. |
-| 4 | `ios/Runner/CameraPreview.swift:makeVerticalCrop` | Crop vertical é `memcpy` linha-a-linha em CPU sobre NV12. CLAUDE.md original prometia shader GL/Metal — só Android tem GL renderer real. | Aquece e dropa frames em "Qualidade" (4K). |
-| 5 | `ios/Runner/FlutterBridge.swift:currentThermalStatus` | iOS não tem `moderate`; mapeia `.fair=1` e pula pra `.serious=3`. `_applyThermalPolicy` no controller espera `moderate=2` e nunca aciona o degraded leve no iOS. | Política térmica do iOS pula direto pra `severe`. |
-| 6 | `lib/app/pages/settings_page.dart:_save` | Slider "Qualidade" só persiste no profile; **não chama `setBitrate` em runtime**. Só efeito no próximo `start`. | Usuário mexe no slider durante live e não vê mudança. |
+| 1 | `ios/Runner/FlutterBridge.swift:handleStartLive` & `android/.../FlutterBridge.kt:wantsVertical=isRecording` | Em modo **live**, vertical **não é publicado**, só horizontal. Modo live está oculto na UI (ver "Foco atual"), então isso não aparece mais pro usuário — só importa se live for reativado. | Silencioso hoje; reaparece se alguém reativar o seletor de modo. |
+| 2 | `ios/Runner/CameraPreview.swift:makeVerticalCrop` | Crop vertical é `memcpy` linha-a-linha em CPU sobre NV12. CLAUDE.md original prometia shader GL/Metal — só Android tem GL renderer real. | Aquece e dropa frames em "Qualidade" (4K). |
+| 3 | `ios/Runner/FlutterBridge.swift:currentThermalStatus` | iOS não tem `moderate`; mapeia `.fair=1` e pula pra `.serious=3`. `_applyThermalPolicy` no controller espera `moderate=2` e nunca aciona o degraded leve no iOS. | Política térmica do iOS pula direto pra `severe`. |
+| 4 | `lib/app/models/resolution_profile.dart:154` | `EncoderProfile.horizontal1080p`/`vertical1080p` são constantes **mortas** — nada as referencia. A troca real de resolução usa `CaptureResolution.defaultHorizontalEncoder`/`defaultVerticalEncoder` via `SessionController.switchCapture`, que já deriva width/height corretos por perfil. | Nenhum (código morto); remover quando mexer no arquivo. |
+| 5 | `ios/Runner/*` | iOS não implementa `setTorch`/`setExposure`/`cameraCapabilities`/`switchCamera` (só Android — ver contrato de platform channels). Dart engole `MissingPluginException` nesses métodos. | No iOS, LivePage não mostra flash/exposição, e trocar câmera pelo chip só reflete visualmente na resolução do próximo `start()` (não reinicia preview). |
+| 6 | `android/.../OpenGateCamera.kt:setTargetFps` | FPS escolhido em Configurações é aplicado direto em `CONTROL_AE_TARGET_FPS_RANGE` sem validar contra `CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES` do device/resolução. | Em hardware que não suporta o fps pedido (ex: 60fps em alguma combinação de sensor), o pedido pode ser ignorado silenciosamente pela câmera. |
 | 7 | `ios/Runner/FlutterBridge.swift:emitStats` | iOS não emite `txBytesA/txDatagramsA/txErrorsA`. | Stats de tx no iOS ficam zerados. |
 | 8 | `ios/Runner/UdpPublisher.swift` | Arquivo se chama `UdpPublisher.swift` mas a classe é `TcpPublisher`. Histórico do refactor 576ecf5/db40130. | Confusão; renomear quando passar mexer aqui. |
+| 9 | `ios/Runner/FileRecorder.swift` / `CameraPreview.swift` | iOS não captura áudio nenhum (sem `AVCaptureAudioDataOutput`, `FileRecorder` só tem `AVAssetWriterInput` de vídeo), apesar de `Info.plist` dizer "LiveGrid captura áudio junto com o vídeo". Android já captura (ver `encoder/AudioEncoder.kt`). | Gravações **iOS** saem mudas; Android não. |
 
 ## Decisões já tomadas (não reverter sem motivo forte)
 
@@ -221,11 +240,11 @@ Em `lib/app/models/resolution_profile.dart`:
 | | Horizontal | Vertical |
 |---|---|---|
 | Resolução | 1920×1080 (fixo) | 1080×1920 (fixo) |
-| FPS | 30 | 30 |
+| FPS | 30 (default) | 30 (default) |
 | Bitrate | 4 Mbps CBR | 3.5 Mbps CBR |
-| GOP | 30 (1 s) | 30 (1 s) |
+| GOP | = FPS (1 s) | = FPS (1 s) |
 
-Sliders na aba Qualidade vão de 2-12 Mbps (H) e 2-10 Mbps (V).
+Sliders na aba Qualidade vão de 2-12 Mbps (H) e 2-10 Mbps (V). FPS é selecionável (24/30/60) em Configurações → Qualidade; `gop` acompanha o fps escolhido pra manter o keyframe a cada 1s (`SettingsPage._save`). No Android, mudar fps em runtime (`setFrameRate`) também reconfigura `CONTROL_AE_TARGET_FPS_RANGE` da câmera — nem todo sensor/resolução aceita todo valor, sem validação contra `CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES` (best-effort).
 
 ## Política térmica (controller)
 
@@ -243,8 +262,8 @@ iOS não dispara `moderate` (ver Bug #5).
 
 ## Permissões
 
-- iOS: `NSCameraUsageDescription`, `NSMicrophoneUsageDescription`, `NSPhotoLibraryAddUsageDescription` (recording → galeria).
-- Android: `CAMERA`, `RECORD_AUDIO`, `POST_NOTIFICATIONS` (foreground service), `WRITE_EXTERNAL_STORAGE` pré-Q (recording → MediaStore).
+- iOS: `NSCameraUsageDescription`, `NSMicrophoneUsageDescription`, `NSPhotoLibraryAddUsageDescription` (recording → galeria). **Ainda não usa o microfone de verdade** (ver Bug #9).
+- Android: `CAMERA`, `RECORD_AUDIO` (em uso, ver "Áudio" em Estado atual), `POST_NOTIFICATIONS` (foreground service), `FOREGROUND_SERVICE_MICROPHONE` (Android 14+, exigido pro serviço em foreground acessar o mic), `WRITE_EXTERNAL_STORAGE` pré-Q (recording → MediaStore).
 - `permission_handler` lida com solicitação no Flutter (`SessionController._defaultPermissionGate`).
 
 ## iOS — limitações

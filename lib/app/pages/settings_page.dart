@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/session_controller.dart';
-import '../models/camera_info.dart';
 import '../models/resolution_profile.dart';
 import '../theme/app_theme.dart';
-import '../widgets/settings/resolution_row.dart';
 import '../widgets/settings/slider_row.dart';
-import '../widgets/settings/url_preview.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -17,65 +14,20 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage>
-    with SingleTickerProviderStateMixin {
-  late CaptureResolution _capture;
+class _SettingsPageState extends State<SettingsPage> {
   late int _horizontalKbps;
   late int _verticalKbps;
-  late CaptureMode _mode;
-  late TextEditingController _obsHostCtrl;
-  late TextEditingController _hPortCtrl;
-  late TextEditingController _vPortCtrl;
-  late TabController _tabController;
-  String? _cameraId;
+  late int _fps;
+
+  static const List<int> _fpsOptions = [24, 30, 60];
 
   @override
   void initState() {
     super.initState();
     final p = widget.controller.profile;
-    final n = widget.controller.network;
-    _capture = p.capture;
     _horizontalKbps = p.horizontal.bitrateBps ~/ 1000;
     _verticalKbps = p.vertical.bitrateBps ~/ 1000;
-    _mode = p.mode;
-    _obsHostCtrl = TextEditingController(text: n.obsHost);
-    _hPortCtrl = TextEditingController(text: '${n.horizontalPort}');
-    _vPortCtrl = TextEditingController(text: '${n.verticalPort}');
-    _cameraId = p.cameraId ?? widget.controller.selectedCamera?.id;
-    _tabController = TabController(length: 4, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _ensureCameras();
-      _ensureDeviceIp();
-    });
-  }
-
-  Future<void> _ensureDeviceIp() async {
-    await widget.controller.refreshDeviceIp();
-    if (!mounted) return;
-    final ip = widget.controller.network.obsHost;
-    if (ip != _obsHostCtrl.text) {
-      _obsHostCtrl.text = ip;
-      setState(() {});
-    }
-  }
-
-  @override
-  void dispose() {
-    _obsHostCtrl.dispose();
-    _hPortCtrl.dispose();
-    _vPortCtrl.dispose();
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _ensureCameras() async {
-    if (widget.controller.cameras.isEmpty) {
-      await widget.controller.refreshCameras();
-      if (!mounted) return;
-      setState(() {
-        _cameraId ??= widget.controller.selectedCamera?.id;
-      });
-    }
+    _fps = p.horizontal.fps;
   }
 
   @override
@@ -89,210 +41,28 @@ class _SettingsPageState extends State<SettingsPage>
               onClose: () => Navigator.of(context).pop(),
               onSave: _save,
             ),
-            TabBar(
-              controller: _tabController,
-              tabs: const [
-                Tab(text: 'Câmera'),
-                Tab(text: 'Captura'),
-                Tab(text: 'Rede'),
-                Tab(text: 'Qualidade'),
-              ],
-              labelColor: AppColors.text,
-              unselectedLabelColor: AppColors.textMuted,
-              indicatorColor: AppColors.text,
-              indicatorSize: TabBarIndicatorSize.label,
-              indicatorWeight: 2,
-              dividerColor: AppColors.hairline,
-              dividerHeight: 1,
-              labelStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.1,
-              ),
-              unselectedLabelStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.1,
-              ),
-              overlayColor: WidgetStatePropertyAll(
-                AppColors.text.withValues(alpha: 0.04),
-              ),
-              splashFactory: NoSplash.splashFactory,
-            ),
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _panel(_cameraBody()),
-                  _panel(_captureBody()),
-                  _panel(_networkBody()),
-                  _panel(_qualityBody()),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _panel(Widget child) {
-    return Align(
-      alignment: Alignment.topCenter,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: child,
-        ),
-      ),
-    );
-  }
-
-  Widget _cameraBody() {
-    final cameras = widget.controller.cameras;
-    if (cameras.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.videocam_off_outlined,
-        title: 'Nenhuma câmera encontrada',
-        message:
-            'Verifique permissões e reconecte o dispositivo para continuar.',
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DropdownButtonFormField<String>(
-          isExpanded: true,
-          initialValue: _cameraIdOrDefault(cameras),
-          dropdownColor: AppColors.surfaceHigh,
-          icon: const Icon(Icons.expand_more, color: AppColors.textMuted),
-          decoration: const InputDecoration(labelText: 'Dispositivo'),
-          style: const TextStyle(color: AppColors.text, fontSize: 13),
-          items: cameras
-              .map(
-                (cam) => DropdownMenuItem(
-                  value: cam.id,
-                  child: Text(
-                    _cameraLabel(cam),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: _qualityBody(),
                   ),
                 ),
-              )
-              .toList(),
-          selectedItemBuilder: (context) => cameras
-              .map(
-                (cam) => Text(
-                  _cameraLabel(cam),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  softWrap: false,
-                ),
-              )
-              .toList(),
-          onChanged: (v) => setState(() => _cameraId = v),
-        ),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () async {
-              await widget.controller.refreshCameras();
-              if (!mounted) return;
-              setState(() {});
-            },
-            icon: const Icon(Icons.refresh, size: 14),
-            label: const Text('ATUALIZAR LISTA'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _captureBody() {
-    return RadioGroup<CaptureResolution>(
-      groupValue: _capture,
-      onChanged: (v) {
-        if (v == null || v == _capture) return;
-        setState(() {
-          _capture = v;
-          _horizontalKbps = v.defaultHorizontalEncoder.bitrateBps ~/ 1000;
-          _verticalKbps = v.defaultVerticalEncoder.bitrateBps ~/ 1000;
-        });
-      },
-      child: Column(
-        children: [
-          for (final r in CaptureResolution.values)
-            ResolutionRow(resolution: r),
-        ],
-      ),
-    );
-  }
-
-  Widget _networkBody() {
-    final isRecording = _mode == CaptureMode.recording;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: _obsHostCtrl,
-          readOnly: true,
-          enableInteractiveSelection: true,
-          decoration: const InputDecoration(
-            labelText: 'IP do dispositivo',
-            helperText: 'Detectado automaticamente — OBS conecta aqui (TCP)',
-          ),
-          style: const TextStyle(color: AppColors.text, fontSize: 13),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _hPortCtrl,
-                decoration: const InputDecoration(labelText: 'Porta H'),
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: AppColors.text, fontSize: 13),
-                onChanged: (_) => setState(() {}),
               ),
             ),
-            if (isRecording) ...[
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _vPortCtrl,
-                  decoration: const InputDecoration(labelText: 'Porta V'),
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: AppColors.text, fontSize: 13),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ),
-            ],
           ],
         ),
-        if (_obsHostCtrl.text.trim().isNotEmpty) ...[
-          const SizedBox(height: 24),
-          _UrlPreviewBlock(
-            host: _obsHostCtrl.text.trim(),
-            hPort: _hPortCtrl.text,
-            vPort: isRecording ? _vPortCtrl.text : null,
-          ),
-        ],
-      ],
+      ),
     );
   }
 
   Widget _qualityBody() {
-    final isLive = _mode == CaptureMode.live;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _CaptureModeSelector(
-          value: _mode,
-          onChanged: (m) => setState(() => _mode = m),
-        ),
-        const SizedBox(height: 28),
         SliderRow(
           label: 'Horizontal',
           value: _horizontalKbps.toDouble(),
@@ -303,68 +73,65 @@ class _SettingsPageState extends State<SettingsPage>
           onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
         ),
         const SizedBox(height: 28),
-        Opacity(
-          opacity: isLive ? 0.35 : 1,
-          child: IgnorePointer(
-            ignoring: isLive,
-            child: SliderRow(
-              label: 'Vertical',
-              value: _verticalKbps.toDouble(),
-              min: 2000,
-              max: 10000,
-              divisions: 16,
-              display: '${(_verticalKbps / 1000).toStringAsFixed(1)} Mbps',
-              onChanged: (v) => setState(() => _verticalKbps = v.toInt()),
+        SliderRow(
+          label: 'Vertical',
+          value: _verticalKbps.toDouble(),
+          min: 2000,
+          max: 10000,
+          divisions: 16,
+          display: '${(_verticalKbps / 1000).toStringAsFixed(1)} Mbps',
+          onChanged: (v) => setState(() => _verticalKbps = v.toInt()),
+        ),
+        const SizedBox(height: 28),
+        const Text(
+          'FPS DA CÂMERA',
+          style: TextStyle(
+            color: AppColors.textFaint,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          decoration: const BoxDecoration(
+            color: AppColors.background,
+            border: Border.fromBorderSide(
+              BorderSide(color: AppColors.hairline),
             ),
+          ),
+          child: Row(
+            children: [
+              for (final f in _fpsOptions)
+                Expanded(
+                  child: _FpsOption(
+                    selected: f == _fps,
+                    label: '$f',
+                    onTap: () => setState(() => _fps = f),
+                  ),
+                ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  String? _cameraIdOrDefault(List<CameraInfo> cameras) {
-    if (_cameraId != null && cameras.any((c) => c.id == _cameraId)) {
-      return _cameraId;
-    }
-    return cameras.isEmpty ? null : cameras.first.id;
-  }
-
-  String _cameraLabel(CameraInfo cam) {
-    final lens = switch (cam.lens) {
-      CameraLens.back => 'Traseira',
-      CameraLens.front => 'Frontal',
-      CameraLens.external => 'Externa',
-      CameraLens.unknown => 'Desconhecida',
-    };
-    final suffix = cam.maxWidth != null && cam.maxHeight != null
-        ? ' · ${cam.maxWidth}×${cam.maxHeight}'
-        : '';
-    final name = cam.label.isEmpty ? '#${cam.id}' : cam.label;
-    return '$lens — $name$suffix';
-  }
-
   void _save() {
     final p = widget.controller.profile;
-    final hDefault = _capture.defaultHorizontalEncoder;
-    final vDefault = _capture.defaultVerticalEncoder;
     widget.controller.updateProfile(
       p.copyWith(
-        capture: _capture,
-        horizontal: hDefault.copyWith(bitrateBps: _horizontalKbps * 1000),
-        vertical: vDefault.copyWith(bitrateBps: _verticalKbps * 1000),
-        cameraId: _cameraId,
-        mode: _mode,
-      ),
-    );
-    widget.controller.updateNetwork(
-      widget.controller.network.copyWith(
-        obsHost: _obsHostCtrl.text.trim(),
-        horizontalPort:
-            int.tryParse(_hPortCtrl.text) ??
-            widget.controller.network.horizontalPort,
-        verticalPort:
-            int.tryParse(_vPortCtrl.text) ??
-            widget.controller.network.verticalPort,
+        horizontal: p.horizontal.copyWith(
+          bitrateBps: _horizontalKbps * 1000,
+          fps: _fps,
+          gop: _fps,
+        ),
+        vertical: p.vertical.copyWith(
+          bitrateBps: _verticalKbps * 1000,
+          fps: _fps,
+          gop: _fps,
+        ),
+        mode: CaptureMode.recording,
       ),
     );
     Navigator.of(context).pop();
@@ -409,94 +176,8 @@ class _SettingsHeader extends StatelessWidget {
   }
 }
 
-class _UrlPreviewBlock extends StatelessWidget {
-  const _UrlPreviewBlock({
-    required this.host,
-    required this.hPort,
-    this.vPort,
-  });
-
-  final String host;
-  final String hPort;
-  final String? vPort;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border.fromBorderSide(BorderSide(color: AppColors.hairline)),
-      ),
-      child: Column(
-        children: [
-          UrlPreview(label: 'HORIZONTAL', url: 'tcp://$host:$hPort'),
-          if (vPort != null) ...[
-            const SizedBox(height: 6),
-            UrlPreview(label: 'VERTICAL', url: 'tcp://$host:$vPort'),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CaptureModeSelector extends StatelessWidget {
-  const _CaptureModeSelector({required this.value, required this.onChanged});
-
-  final CaptureMode value;
-  final ValueChanged<CaptureMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'MODO',
-          style: TextStyle(
-            color: AppColors.textFaint,
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.6,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Container(
-          decoration: const BoxDecoration(
-            color: AppColors.background,
-            border: Border.fromBorderSide(
-              BorderSide(color: AppColors.hairline),
-            ),
-          ),
-          child: Row(
-            children: [
-              for (final m in CaptureMode.values)
-                Expanded(
-                  child: _CaptureModeOption(
-                    selected: m == value,
-                    label: switch (m) {
-                      CaptureMode.live => 'LIVE',
-                      CaptureMode.recording => 'GRAVAÇÃO',
-                    },
-                    onTap: () => onChanged(m),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          value.description,
-          style: const TextStyle(color: AppColors.textSubtle, fontSize: 11),
-        ),
-      ],
-    );
-  }
-}
-
-class _CaptureModeOption extends StatelessWidget {
-  const _CaptureModeOption({
+class _FpsOption extends StatelessWidget {
+  const _FpsOption({
     required this.selected,
     required this.label,
     required this.onTap,
@@ -525,49 +206,6 @@ class _CaptureModeOption extends StatelessWidget {
             letterSpacing: 0.4,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border.fromBorderSide(BorderSide(color: AppColors.hairline)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: AppColors.textFaint),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.text,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            message,
-            style: const TextStyle(color: AppColors.textSubtle, fontSize: 12),
-          ),
-        ],
       ),
     );
   }

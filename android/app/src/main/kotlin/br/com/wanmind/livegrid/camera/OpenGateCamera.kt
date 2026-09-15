@@ -12,6 +12,7 @@ import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import android.view.Surface
 
@@ -21,6 +22,10 @@ class OpenGateCamera(private val context: Context) {
         val width: Int,
         val height: Int,
         val sensorOrientation: Int,
+        val hasFlash: Boolean,
+        val exposureMin: Int,
+        val exposureMax: Int,
+        val exposureStepEv: Double,
     )
 
     private val manager: CameraManager =
@@ -31,6 +36,7 @@ class OpenGateCamera(private val context: Context) {
 
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
+    private var requestBuilder: CaptureRequest.Builder? = null
 
     @SuppressLint("MissingPermission")
     fun open(
@@ -50,13 +56,30 @@ class OpenGateCamera(private val context: Context) {
             val sizes = configMap.getOutputSizes(SurfaceTexture::class.java) ?: emptyArray()
             val best = pickSize(sizes, targetWidth, targetHeight) ?: return onError("no size")
             val sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-            Log.i(TAG, "cam=$cameraId size=${best.width}x${best.height} target=${targetWidth}x${targetHeight} sensor=$sensorOrientation")
+            val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
+            val expRange = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+            val expStep = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+            val exposureMin = expRange?.lower ?: 0
+            val exposureMax = expRange?.upper ?: 0
+            val exposureStepEv = expStep?.toDouble() ?: 0.0
+            Log.i(TAG, "cam=$cameraId size=${best.width}x${best.height} target=${targetWidth}x${targetHeight} sensor=$sensorOrientation flash=$hasFlash ev=[$exposureMin,$exposureMax]*$exposureStepEv")
             onSizeChosen(best.width, best.height)
 
             manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     device = camera
-                    createSession(camera, outputs, best, sensorOrientation, onReady, onError)
+                    createSession(
+                        camera,
+                        outputs,
+                        best,
+                        sensorOrientation,
+                        hasFlash,
+                        exposureMin,
+                        exposureMax,
+                        exposureStepEv,
+                        onReady,
+                        onError,
+                    )
                 }
 
                 override fun onDisconnected(camera: CameraDevice) {
@@ -80,13 +103,17 @@ class OpenGateCamera(private val context: Context) {
         outputs: List<Surface>,
         size: Size,
         sensorOrientation: Int,
+        hasFlash: Boolean,
+        exposureMin: Int,
+        exposureMax: Int,
+        exposureStepEv: Double,
         onReady: (OpenResult) -> Unit,
         onError: (String) -> Unit,
     ) {
         val cb = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
                 session = s
-                val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     outputs.forEach(::addTarget)
                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                     set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
@@ -99,10 +126,21 @@ class OpenGateCamera(private val context: Context) {
                         CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
                         CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF,
                     )
-                }.build()
+                }
+                requestBuilder = builder
                 try {
-                    s.setRepeatingRequest(request, null, handler)
-                    onReady(OpenResult(size.width, size.height, sensorOrientation))
+                    s.setRepeatingRequest(builder.build(), null, handler)
+                    onReady(
+                        OpenResult(
+                            size.width,
+                            size.height,
+                            sensorOrientation,
+                            hasFlash,
+                            exposureMin,
+                            exposureMax,
+                            exposureStepEv,
+                        ),
+                    )
                 } catch (t: Throwable) {
                     onError("setRepeatingRequest: ${t.message}")
                 }
@@ -117,6 +155,42 @@ class OpenGateCamera(private val context: Context) {
         camera.createCaptureSession(outputs, cb, handler)
     }
 
+    fun setTorch(enabled: Boolean) {
+        val builder = requestBuilder ?: return
+        val s = session ?: return
+        try {
+            builder.set(
+                CaptureRequest.FLASH_MODE,
+                if (enabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF,
+            )
+            s.setRepeatingRequest(builder.build(), null, handler)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setTorch: ${t.message}")
+        }
+    }
+
+    fun setExposureCompensation(value: Int) {
+        val builder = requestBuilder ?: return
+        val s = session ?: return
+        try {
+            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, value)
+            s.setRepeatingRequest(builder.build(), null, handler)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setExposureCompensation: ${t.message}")
+        }
+    }
+
+    fun setTargetFps(fps: Int) {
+        val builder = requestBuilder ?: return
+        val s = session ?: return
+        try {
+            builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
+            s.setRepeatingRequest(builder.build(), null, handler)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setTargetFps: ${t.message}")
+        }
+    }
+
     fun stop() {
         try {
             session?.close()
@@ -126,6 +200,7 @@ class OpenGateCamera(private val context: Context) {
         }
         session = null
         device = null
+        requestBuilder = null
     }
 
     fun release() {

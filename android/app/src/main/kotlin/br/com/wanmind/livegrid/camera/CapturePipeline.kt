@@ -41,6 +41,8 @@ class CapturePipeline(
         private set
     var captureHeight: Int? = null
         private set
+    var capabilities: OpenGateCamera.OpenResult? = null
+        private set
 
     fun startPreview(
         cameraId: String?,
@@ -76,6 +78,7 @@ class CapturePipeline(
                     targetHeight = captureHeight,
                     onSizeChosen = { w, h -> r.setInputBufferSize(w, h) },
                     onReady = { res ->
+                        capabilities = res
                         r.configureInputSize(
                             width = res.width,
                             height = res.height,
@@ -128,7 +131,12 @@ class CapturePipeline(
 
     fun setHorizontalBitrate(bps: Int) = encoderPool.setHorizontalBitrate(bps)
     fun setVerticalBitrate(bps: Int) = encoderPool.setVerticalBitrate(bps)
-    fun setFrameRate(fps: Int) = encoderPool.setFrameRate(fps)
+    fun setFrameRate(fps: Int) {
+        encoderPool.setFrameRate(fps)
+        camera?.setTargetFps(fps)
+    }
+    fun setTorch(enabled: Boolean) = camera?.setTorch(enabled) ?: Unit
+    fun setExposureCompensation(value: Int) = camera?.setExposureCompensation(value) ?: Unit
     fun setVerticalCropCenter(value: Float) {
         renderer?.setVerticalCropCenter(value)
     }
@@ -136,6 +144,7 @@ class CapturePipeline(
     fun horizontalBitrate(): Int = encoderPool.horizontalBitrate()
     fun verticalBitrate(): Int = encoderPool.verticalBitrate()
     fun currentFps(): Int = encoderPool.currentFps()
+    fun audioLevel(): Float = encoderPool.audioLevel()
     fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         encoderPool.horizontalPublisherSnapshot()
     fun verticalPublisherSnapshot(): TcpPublisher.Snapshot? =
@@ -155,6 +164,7 @@ class CapturePipeline(
         previewSurface?.release()
         previewSurface = null
         previewRunning.set(false)
+        capabilities = null
     }
 
     fun releaseTexture() {

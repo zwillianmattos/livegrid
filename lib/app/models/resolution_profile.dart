@@ -167,13 +167,14 @@ class EncoderProfile {
     gop: 30,
   );
 
-  EncoderProfile copyWith({int? bitrateBps, int? fps}) => EncoderProfile(
-    width: width,
-    height: height,
-    fps: fps ?? this.fps,
-    bitrateBps: bitrateBps ?? this.bitrateBps,
-    gop: gop,
-  );
+  EncoderProfile copyWith({int? bitrateBps, int? fps, int? gop}) =>
+      EncoderProfile(
+        width: width,
+        height: height,
+        fps: fps ?? this.fps,
+        bitrateBps: bitrateBps ?? this.bitrateBps,
+        gop: gop ?? this.gop,
+      );
 
   Map<String, Object> toMap() => {
     'width': width,
@@ -191,7 +192,7 @@ class SessionProfile {
     required this.vertical,
     this.cameraId,
     this.verticalCropCenterX = 0.5,
-    this.mode = CaptureMode.live,
+    this.mode = CaptureMode.recording,
   });
 
   final CaptureResolution capture;
@@ -205,7 +206,7 @@ class SessionProfile {
     capture: CaptureResolution.balanced,
     horizontal: CaptureResolution.balanced.defaultHorizontalEncoder,
     vertical: CaptureResolution.balanced.defaultVerticalEncoder,
-    mode: CaptureMode.live,
+    mode: CaptureMode.recording,
   );
 
   SessionProfile copyWith({

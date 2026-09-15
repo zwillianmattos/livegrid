@@ -12,6 +12,7 @@ import android.util.Log
 import android.view.Surface
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 class HardwareEncoder(
@@ -19,6 +20,7 @@ class HardwareEncoder(
     private val outputFile: File?,
     val bitrateMeter: BitrateMeter = BitrateMeter(),
     private val onFrame: ((ByteArray, Long, Int) -> Unit)? = null,
+    private val expectsAudioTrack: Boolean = false,
 ) {
 
     data class Profile(
@@ -34,7 +36,11 @@ class HardwareEncoder(
     private var inputSurface: Surface? = null
     private var fos: FileOutputStream? = null
     private var muxer: MediaMuxer? = null
-    private var muxerTrack: Int = -1
+    private val muxerLock = Any()
+    private var videoTrack: Int = -1
+    private var audioTrack: Int = -1
+    private var videoTrackReady = false
+    private var audioTrackReady = !expectsAudioTrack
     private var muxerStarted = false
     private val isMp4 = outputFile?.name?.endsWith(".mp4", ignoreCase = true) == true
     private val thread = HandlerThread("enc-${profile.label}").apply { start() }
@@ -171,17 +177,21 @@ class HardwareEncoder(
         } catch (_: Throwable) {
         }
         fos = null
-        try {
-            if (muxerStarted) muxer?.stop()
-        } catch (_: Throwable) {
+        synchronized(muxerLock) {
+            try {
+                if (muxerStarted) muxer?.stop()
+            } catch (_: Throwable) {
+            }
+            try {
+                muxer?.release()
+            } catch (_: Throwable) {
+            }
+            muxer = null
+            muxerStarted = false
+            videoTrack = -1
+            audioTrack = -1
         }
-        try {
-            muxer?.release()
-        } catch (_: Throwable) {
-        }
-        muxer = null
-        muxerStarted = false
-        muxerTrack = -1
+        handler.removeCallbacks(audioTimeoutRunnable)
         thread.quitSafely()
     }
 
@@ -199,11 +209,15 @@ class HardwareEncoder(
                 if (info.size > 0) {
                     val isCodecConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                     if (isMp4) {
-                        if (muxerStarted && !isCodecConfig) {
-                            val view = buffer.duplicate()
-                            view.position(info.offset)
-                            view.limit(info.offset + info.size)
-                            muxer?.writeSampleData(muxerTrack, view, info)
+                        if (!isCodecConfig) {
+                            synchronized(muxerLock) {
+                                if (muxerStarted) {
+                                    val view = buffer.duplicate()
+                                    view.position(info.offset)
+                                    view.limit(info.offset + info.size)
+                                    muxer?.writeSampleData(videoTrack, view, info)
+                                }
+                            }
                         }
                     } else if (fos != null) {
                         val chunk = ByteArray(info.size)
@@ -235,16 +249,65 @@ class HardwareEncoder(
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             Log.i(TAG, "format ${profile.label}: $format")
             if (isMp4) {
-                val m = muxer ?: return
-                muxerTrack = m.addTrack(format)
-                m.start()
-                muxerStarted = true
+                synchronized(muxerLock) {
+                    val m = muxer ?: return
+                    videoTrack = m.addTrack(format)
+                    videoTrackReady = true
+                    maybeStartMuxerLocked()
+                }
+                if (expectsAudioTrack) {
+                    handler.postDelayed(audioTimeoutRunnable, AUDIO_WAIT_TIMEOUT_MS)
+                }
             }
+        }
+    }
+
+    /** Deve ser chamado com [muxerLock] já adquirido. */
+    private fun maybeStartMuxerLocked() {
+        val m = muxer ?: return
+        if (muxerStarted) return
+        if (videoTrackReady && audioTrackReady) {
+            m.start()
+            muxerStarted = true
+        }
+    }
+
+    private val audioTimeoutRunnable = Runnable {
+        synchronized(muxerLock) {
+            if (!muxerStarted && videoTrackReady && !audioTrackReady) {
+                Log.w(TAG, "audio track não chegou a tempo (${profile.label}); iniciando muxer sem áudio")
+                audioTrackReady = true
+                maybeStartMuxerLocked()
+            }
+        }
+    }
+
+    fun addAudioTrack(format: MediaFormat) {
+        if (!isMp4 || !expectsAudioTrack) return
+        synchronized(muxerLock) {
+            val m = muxer ?: return
+            if (audioTrackReady) return
+            audioTrack = m.addTrack(format)
+            audioTrackReady = true
+            handler.removeCallbacks(audioTimeoutRunnable)
+            maybeStartMuxerLocked()
+        }
+    }
+
+    fun writeAudioSample(data: ByteArray, presentationTimeUs: Long, flags: Int) {
+        if (!isMp4 || audioTrack < 0) return
+        synchronized(muxerLock) {
+            if (!muxerStarted || audioTrack < 0) return
+            val info = MediaCodec.BufferInfo().apply {
+                set(0, data.size, presentationTimeUs, flags)
+            }
+            muxer?.writeSampleData(audioTrack, ByteBuffer.wrap(data), info)
         }
     }
 
     companion object {
         private const val TAG = "HardwareEncoder"
         private const val MIME = "video/avc"
+        private const val AUDIO_WAIT_TIMEOUT_MS = 1500L
     }
 }

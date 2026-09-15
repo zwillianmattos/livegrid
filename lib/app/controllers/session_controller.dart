@@ -12,6 +12,8 @@ import '../models/stream_stats.dart';
 import '../models/thermal_status.dart';
 import '../services/native_bridge.dart';
 
+export '../services/native_bridge.dart' show CameraCapabilities;
+
 typedef PermissionGate = Future<bool> Function();
 
 class SessionController extends ChangeNotifier {
@@ -34,6 +36,9 @@ class SessionController extends ChangeNotifier {
   StreamSubscription<StreamStats>? _statsSub;
   ThermalStatus? _appliedThermal;
   CaptureStartInfo? _lastStart;
+  bool _torchEnabled = false;
+  int _exposureValue = 0;
+  CameraCapabilities _capabilities = CameraCapabilities.none;
 
   SessionState get state => _state;
   int? get textureId => _textureId;
@@ -44,6 +49,9 @@ class SessionController extends ChangeNotifier {
   NetworkProfile get network => _network;
   List<CameraInfo> get cameras => _cameras;
   CaptureStartInfo? get lastStart => _lastStart;
+  bool get torchEnabled => _torchEnabled;
+  int get exposureValue => _exposureValue;
+  CameraCapabilities get capabilities => _capabilities;
 
   CameraInfo? get selectedCamera {
     if (_cameras.isEmpty) return null;
@@ -73,6 +81,7 @@ class SessionController extends ChangeNotifier {
         );
         _profile = _profile.copyWith(cameraId: back.id);
       }
+      _capabilities = await _bridge.cameraCapabilities();
       _statsSub ??= _bridge.statsStream.listen(
         _onStats,
         onError: _onStatsError,
@@ -96,8 +105,14 @@ class SessionController extends ChangeNotifier {
     }
   }
 
-  void selectCamera(String cameraId) {
+  Future<void> selectCamera(String cameraId) async {
+    if (cameraId == _profile.cameraId) return;
     _profile = _profile.copyWith(cameraId: cameraId);
+    notifyListeners();
+    await _bridge.switchCamera(cameraId);
+    _capabilities = await _bridge.cameraCapabilities();
+    _torchEnabled = false;
+    _exposureValue = 0;
     notifyListeners();
   }
 
@@ -109,13 +124,17 @@ class SessionController extends ChangeNotifier {
     if (prev.capture != profile.capture) {
       await _bridge.switchResolution(profile.capture);
     }
-    final hChanged = prev.horizontal.bitrateBps != profile.horizontal.bitrateBps;
+    final hChanged =
+        prev.horizontal.bitrateBps != profile.horizontal.bitrateBps;
     final vChanged = prev.vertical.bitrateBps != profile.vertical.bitrateBps;
     if (hChanged || vChanged) {
       await _bridge.setBitrate(
         horizontalBps: hChanged ? profile.horizontal.bitrateBps : null,
         verticalBps: vChanged ? profile.vertical.bitrateBps : null,
       );
+    }
+    if (prev.horizontal.fps != profile.horizontal.fps) {
+      await _bridge.setFrameRate(profile.horizontal.fps);
     }
   }
 
@@ -168,7 +187,19 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> switchCapture(CaptureResolution resolution) async {
-    _profile = _profile.copyWith(capture: resolution);
+    _profile = _profile.copyWith(
+      capture: resolution,
+      horizontal: resolution.defaultHorizontalEncoder.copyWith(
+        bitrateBps: _profile.horizontal.bitrateBps,
+        fps: _profile.horizontal.fps,
+        gop: _profile.horizontal.gop,
+      ),
+      vertical: resolution.defaultVerticalEncoder.copyWith(
+        bitrateBps: _profile.vertical.bitrateBps,
+        fps: _profile.vertical.fps,
+        gop: _profile.vertical.gop,
+      ),
+    );
     notifyListeners();
     if (isLive) {
       await _bridge.switchResolution(resolution);
@@ -180,6 +211,25 @@ class SessionController extends ChangeNotifier {
     if (_profile.verticalCropCenterX == clamped) return;
     _profile = _profile.copyWith(verticalCropCenterX: clamped);
     notifyListeners();
+  }
+
+  Future<void> toggleTorch() async {
+    if (!_capabilities.hasFlash) return;
+    _torchEnabled = !_torchEnabled;
+    notifyListeners();
+    await _bridge.setTorch(_torchEnabled);
+  }
+
+  Future<void> setExposure(int value) async {
+    if (!_capabilities.hasExposureControl) return;
+    final clamped = value.clamp(
+      _capabilities.exposureMin,
+      _capabilities.exposureMax,
+    );
+    if (clamped == _exposureValue) return;
+    _exposureValue = clamped;
+    notifyListeners();
+    await _bridge.setExposure(clamped);
   }
 
   Future<void> refreshWifiBand() async {

@@ -26,6 +26,8 @@ class EncoderPool(private val recordingsDir: File) {
     private var horizontalTarget: GlRenderer.Target? = null
     private var verticalTarget: GlRenderer.Target? = null
     private var publishers: Publishers = Publishers(null, null)
+    private var audioEncoder: AudioEncoder? = null
+    @Volatile private var audioLevelValue: Float = 0f
 
     fun start(
         horizontalProfile: HardwareEncoder.Profile?,
@@ -49,12 +51,40 @@ class EncoderPool(private val recordingsDir: File) {
         publishers.horizontal?.open()
         publishers.vertical?.open()
 
+        val audioOk = if (recordToDisk) {
+            val audio = AudioEncoder(
+                onFormat = { format ->
+                    horizontal?.addAudioTrack(format)
+                    vertical?.addAudioTrack(format)
+                },
+                onSample = { data, pts, flags ->
+                    horizontal?.writeAudioSample(data, pts, flags)
+                    vertical?.writeAudioSample(data, pts, flags)
+                },
+                onLevel = { level -> audioLevelValue = level },
+            )
+            val ok = audio.start()
+            if (ok) {
+                audioEncoder = audio
+            } else {
+                Log.w(TAG, "áudio indisponível; gravação seguirá muda")
+            }
+            ok
+        } else {
+            false
+        }
+
         horizontalProfile?.let { hp ->
-            val h = HardwareEncoder(hp, hFile, onFrame = { data, pts, flags ->
-                val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                    flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                publishers.horizontal?.publish(data, pts, isKey)
-            })
+            val h = HardwareEncoder(
+                hp,
+                hFile,
+                onFrame = { data, pts, flags ->
+                    val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                        flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                    publishers.horizontal?.publish(data, pts, isKey)
+                },
+                expectsAudioTrack = audioOk,
+            )
             val hSurface = h.start()
             horizontal = h
             horizontalTarget = renderer.addTarget(
@@ -67,11 +97,16 @@ class EncoderPool(private val recordingsDir: File) {
         }
 
         verticalProfile?.let { vp ->
-            val v = HardwareEncoder(vp, vFile, onFrame = { data, pts, flags ->
-                val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                    flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                publishers.vertical?.publish(data, pts, isKey)
-            })
+            val v = HardwareEncoder(
+                vp,
+                vFile,
+                onFrame = { data, pts, flags ->
+                    val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                        flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                    publishers.vertical?.publish(data, pts, isKey)
+                },
+                expectsAudioTrack = audioOk,
+            )
             val vSurface = v.start()
             vertical = v
             verticalTarget = renderer.addTarget(
@@ -83,7 +118,7 @@ class EncoderPool(private val recordingsDir: File) {
             )
         }
 
-        Log.i(TAG, "encoders on (file=$recordToDisk, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
+        Log.i(TAG, "encoders on (file=$recordToDisk, audio=$audioOk, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
         return Output(hFile, vFile)
     }
 
@@ -101,6 +136,7 @@ class EncoderPool(private val recordingsDir: File) {
     fun horizontalBitrate(): Int = horizontal?.bitrateMeter?.sampleBps() ?: 0
     fun verticalBitrate(): Int = vertical?.bitrateMeter?.sampleBps() ?: 0
     fun currentFps(): Int = horizontal?.fps() ?: vertical?.fps() ?: 0
+    fun audioLevel(): Float = if (audioEncoder != null) audioLevelValue else 0f
 
     fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         publishers.horizontal?.snapshot()
@@ -118,6 +154,9 @@ class EncoderPool(private val recordingsDir: File) {
         vertical?.stop()
         horizontal = null
         vertical = null
+        audioEncoder?.stop()
+        audioEncoder = null
+        audioLevelValue = 0f
         publishers.horizontal?.close()
         publishers.vertical?.close()
         publishers = Publishers(null, null)

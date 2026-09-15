@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../models/network_profile.dart';
 import '../../models/session_state.dart';
 import '../../models/stream_stats.dart';
 import '../../models/thermal_status.dart';
@@ -17,7 +16,6 @@ class TopChrome extends StatelessWidget {
     super.key,
     required this.state,
     required this.stats,
-    required this.wifiBand,
     required this.liveStartedAt,
     this.configure = false,
     this.onConfigure,
@@ -26,7 +24,6 @@ class TopChrome extends StatelessWidget {
 
   final SessionState state;
   final StreamStats stats;
-  final WifiBand wifiBand;
   final DateTime? liveStartedAt;
   final bool configure;
   final VoidCallback? onConfigure;
@@ -39,7 +36,7 @@ class TopChrome extends StatelessWidget {
       children: [
         _StatusPill(state: state, liveStartedAt: liveStartedAt),
         const Spacer(),
-        if (!configure) _StatsPill(stats: stats, wifiBand: wifiBand),
+        if (!configure) _StatsPill(stats: stats),
         if (configure) const _ConfigureTitle(),
         const SizedBox(width: 8),
         if (onConfigure != null) ...[
@@ -72,7 +69,7 @@ class _StatusPill extends StatelessWidget {
     final (color, label) = switch (state) {
       SessionState.idle => (AppColors.textSubtle, 'PRONTO'),
       SessionState.starting => (AppColors.warn, 'INICIANDO'),
-      SessionState.live => (AppColors.live, 'AO VIVO'),
+      SessionState.live => (AppColors.live, 'GRAVANDO'),
       SessionState.degraded => (AppColors.warn, 'DEGRADADO'),
       SessionState.stopping => (AppColors.warn, 'PARANDO'),
       SessionState.error => (AppColors.live, 'ERRO'),
@@ -147,10 +144,9 @@ class _LiveDurationTextState extends State<_LiveDurationText> {
 }
 
 class _StatsPill extends StatelessWidget {
-  const _StatsPill({required this.stats, required this.wifiBand});
+  const _StatsPill({required this.stats});
 
   final StreamStats stats;
-  final WifiBand wifiBand;
 
   @override
   Widget build(BuildContext context) {
@@ -165,21 +161,8 @@ class _StatsPill extends StatelessWidget {
           _StatCell(label: 'FPS', value: stats.fps.toStringAsFixed(0)),
           const SizedBox(width: 16),
           _ThermalCell(status: stats.thermalStatus),
-          if (wifiBand == WifiBand.band24GHz) ...[
-            const SizedBox(width: 14),
-            const SeparatorDot(),
-            const SizedBox(width: 14),
-            const Icon(Icons.wifi, size: 12, color: AppColors.warn),
-            const SizedBox(width: 4),
-            Text(
-              '2.4G',
-              style: AppTheme.numeric(
-                size: 11,
-                color: AppColors.warn,
-                weight: FontWeight.w500,
-              ),
-            ),
-          ],
+          const SizedBox(width: 16),
+          _AudioLevelCell(level: stats.audioLevel),
         ],
       ),
     );
@@ -230,6 +213,37 @@ class _ThermalCell extends StatelessWidget {
       ThermalStatus.shutdown => AppColors.live,
     };
     return StatusDot(color: color);
+  }
+}
+
+class _AudioLevelCell extends StatelessWidget {
+  const _AudioLevelCell({required this.level});
+
+  final double level;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = level <= 0.01;
+    final color = muted ? AppColors.textFaint : AppColors.text;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(muted ? Icons.mic_off : Icons.mic, size: 12, color: color),
+        const SizedBox(width: 5),
+        SizedBox(
+          width: 24,
+          height: 4,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: level.clamp(0.0, 1.0),
+              backgroundColor: AppColors.textFaint.withValues(alpha: 0.3),
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

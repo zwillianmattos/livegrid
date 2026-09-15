@@ -15,6 +15,7 @@ class StreamStats {
     required this.txDatagramsB,
     required this.txBytesB,
     required this.txErrorsB,
+    required this.audioLevel,
     required this.timestampMs,
   });
 
@@ -31,6 +32,7 @@ class StreamStats {
   final int txDatagramsB;
   final int txBytesB;
   final int txErrorsB;
+  final double audioLevel;
   final int timestampMs;
 
   static const zero = StreamStats(
@@ -47,6 +49,7 @@ class StreamStats {
     txDatagramsB: 0,
     txBytesB: 0,
     txErrorsB: 0,
+    audioLevel: 0,
     timestampMs: 0,
   );
 
@@ -67,6 +70,7 @@ class StreamStats {
       txDatagramsB: (map['txDatagramsB'] as num?)?.toInt() ?? 0,
       txBytesB: (map['txBytesB'] as num?)?.toInt() ?? 0,
       txErrorsB: (map['txErrorsB'] as num?)?.toInt() ?? 0,
+      audioLevel: (map['audioLevel'] as num?)?.toDouble() ?? 0,
       timestampMs: (map['timestampMs'] as num?)?.toInt() ?? 0,
     );
   }
