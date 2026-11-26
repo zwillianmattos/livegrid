@@ -26,7 +26,7 @@ class CapturePipeline(
     private var previewTarget: GlRenderer.Target? = null
     private var previewSurface: Surface? = null
 
-    private val encoderPool = EncoderPool(recordingsDir)
+    private val encoderPool = EncoderPool(context, recordingsDir)
 
     private val previewRunning = AtomicBoolean(false)
 
@@ -145,6 +145,7 @@ class CapturePipeline(
     fun verticalBitrate(): Int = encoderPool.verticalBitrate()
     fun currentFps(): Int = encoderPool.currentFps()
     fun audioLevel(): Float = encoderPool.audioLevel()
+    fun audioInput(): android.media.AudioDeviceInfo? = encoderPool.audioInput()
     fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         encoderPool.horizontalPublisherSnapshot()
     fun verticalPublisherSnapshot(): TcpPublisher.Snapshot? =

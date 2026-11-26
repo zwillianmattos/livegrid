@@ -1,11 +1,16 @@
 package br.com.wanmind.livegrid
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
@@ -16,7 +21,9 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import androidx.annotation.RequiresApi
+import androidx.core.content.FileProvider
 import br.com.wanmind.livegrid.camera.CapturePipeline
+import br.com.wanmind.livegrid.encoder.AudioEncoder
 import br.com.wanmind.livegrid.encoder.EncoderPool
 import br.com.wanmind.livegrid.encoder.HardwareEncoder
 import br.com.wanmind.livegrid.service.LiveGridForegroundService
@@ -29,10 +36,13 @@ import io.flutter.view.TextureRegistry
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 class FlutterBridge(
     private val context: Context,
     flutterEngine: FlutterEngine,
+    private val activity: Activity? = null,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     private val control = MethodChannel(
@@ -58,6 +68,13 @@ class FlutterBridge(
 
     private var activeCameraId: String? = null
     private var lastRecording: EncoderPool.Output? = null
+    private val publishThreads = ConcurrentHashMap<String, Thread>()
+    private val publishedUris: MutableMap<String, Uri> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Uri>() {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Uri>?): Boolean =
+                size > MAX_PUBLISHED_URIS
+        },
+    )
 
     init {
         control.setMethodCallHandler(this)
@@ -75,9 +92,7 @@ class FlutterBridge(
                 stopForegroundService()
                 val pending = lastRecording
                 lastRecording = null
-                if (pending != null) {
-                    Thread({ publishRecording(pending) }, "publish-gallery").start()
-                }
+                if (pending != null) startPublish(pending)
                 result.success(null)
             }
             "switchResolution" -> handleSwitchResolution(call, result)
@@ -118,25 +133,30 @@ class FlutterBridge(
                 result.success(null)
             }
             "cameraCapabilities" -> result.success(cameraCapabilities())
+            "shareFile" -> handleShareFile(call, result)
+            "openGallery" -> handleOpenGallery(result)
             else -> result.notImplemented()
         }
     }
 
     private fun handleInit(result: MethodChannel.Result) {
-        val textureId = pipeline.prepareTexture()
-        val cameraId = defaultBackCameraId() ?: run {
-            Log.w(TAG, "nenhuma câmera traseira encontrada")
-            result.success(textureId)
-            return
+        result.success(pipeline.prepareTexture())
+        // Posted, not inline: the reply goes out before EGL setup and the
+        // characteristics queries, and the main looper is FIFO, so any call
+        // Dart sends after receiving the textureId still runs after this.
+        handler.post {
+            val cameraId = defaultBackCameraId() ?: run {
+                Log.w(TAG, "nenhuma câmera traseira encontrada")
+                return@post
+            }
+            activeCameraId = cameraId
+            pipeline.startPreview(
+                cameraId = cameraId,
+                previewWidth = PREVIEW_WIDTH,
+                previewHeight = PREVIEW_HEIGHT,
+                onError = { msg -> Log.w(TAG, "preview error: $msg") },
+            )
         }
-        activeCameraId = cameraId
-        pipeline.startPreview(
-            cameraId = cameraId,
-            previewWidth = PREVIEW_WIDTH,
-            previewHeight = PREVIEW_HEIGHT,
-            onError = { msg -> Log.w(TAG, "preview error: $msg") },
-        )
-        result.success(textureId)
     }
 
     private fun handleStart(call: MethodCall, result: MethodChannel.Result) {
@@ -274,6 +294,20 @@ class FlutterBridge(
         result.success(null)
     }
 
+    private fun startPublish(output: EncoderPool.Output) {
+        val paths = listOfNotNull(output.horizontalFile, output.verticalFile).map { it.absolutePath }
+        val thread = Thread({
+            try {
+                publishRecording(output)
+            } finally {
+                val self = Thread.currentThread()
+                paths.forEach { publishThreads.remove(it, self) }
+            }
+        }, "publish-gallery")
+        paths.forEach { publishThreads[it] = thread }
+        thread.start()
+    }
+
     private fun publishRecording(output: EncoderPool.Output) {
         listOfNotNull(output.horizontalFile, output.verticalFile).forEach { file ->
             try {
@@ -283,6 +317,7 @@ class FlutterBridge(
                 }
                 val uri = publishToGallery(file)
                 if (uri != null) {
+                    publishedUris[file.absolutePath] = uri
                     file.delete()
                     Log.i(TAG, "publishRecording moved ${file.name} -> $uri")
                 } else {
@@ -331,13 +366,120 @@ class FlutterBridge(
         return uri
     }
 
+    private fun handleShareFile(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        if (path.isNullOrBlank()) {
+            result.error("bad_args", "path ausente", null)
+            return
+        }
+        val host = activity ?: return result.error("no_activity", "activity indisponível", null)
+        Thread({
+            // stop() publica em background e apaga o arquivo privado; espera para obter a URI do MediaStore.
+            val pending = publishThreads[path]
+            if (pending != null) {
+                pending.join(PUBLISH_WAIT_MS)
+                // Item com IS_PENDING=1 não aparece na busca por DISPLAY_NAME: falharia com file_not_found.
+                if (pending.isAlive) {
+                    handler.post { result.error("publish_pending", "publicação na galeria em andamento: $path", null) }
+                    return@Thread
+                }
+            }
+            val uri = try {
+                resolveShareUri(path) ?: privateFileUri(path)
+            } catch (t: Throwable) {
+                Log.w(TAG, "shareFile resolve $path: ${t.message}", t)
+                null
+            }
+            handler.post {
+                if (uri == null) {
+                    result.error("file_not_found", "vídeo não encontrado na galeria: $path", null)
+                    return@post
+                }
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "video/mp4"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    clipData = ClipData.newRawUri(null, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    host.startActivity(Intent.createChooser(send, null))
+                    result.success(null)
+                } catch (t: Throwable) {
+                    result.error("share_failed", t.message, null)
+                }
+            }
+        }, "share-file").start()
+    }
+
+    private fun resolveShareUri(path: String): Uri? {
+        if (path.startsWith("content://")) return Uri.parse(path)
+        publishedUris[path]?.let { return it }
+        val name = File(path).name
+        val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        context.contentResolver.query(
+            collection,
+            arrayOf(MediaStore.Video.Media._ID),
+            "${MediaStore.Video.Media.DISPLAY_NAME}=?",
+            arrayOf(name),
+            "${MediaStore.Video.Media.DATE_ADDED} DESC",
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                return ContentUris.withAppendedId(collection, cursor.getLong(0))
+            }
+        }
+        return null
+    }
+
+    private fun privateFileUri(path: String): Uri? {
+        val file = File(path)
+        if (!file.exists()) return null
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }
+
+    private fun handleOpenGallery(result: MethodChannel.Result) {
+        val host = activity ?: return result.error("no_activity", "activity indisponível", null)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video/*")
+        }
+        try {
+            host.startActivity(view)
+            result.success(null)
+            return
+        } catch (_: ActivityNotFoundException) {
+        }
+        try {
+            host.startActivity(
+                Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY),
+            )
+            result.success(null)
+        } catch (t: ActivityNotFoundException) {
+            result.error("no_gallery", t.message, null)
+        }
+    }
+
     private fun cameraCapabilities(): Map<String, Any?> {
-        val caps = pipeline.capabilities
+        val caps = pipeline.capabilities ?: return staticCapabilities(activeCameraId)
         return mapOf(
             "hasFlash" to (caps?.hasFlash ?: false),
             "exposureMin" to (caps?.exposureMin ?: 0),
             "exposureMax" to (caps?.exposureMax ?: 0),
             "exposureStepEv" to (caps?.exposureStepEv ?: 0.0),
+        )
+    }
+
+    // Init no longer waits for the camera to open, so the first query usually
+    // lands before OpenGateCamera reports; the characteristics hold the same values.
+    private fun staticCapabilities(cameraId: String?): Map<String, Any?> {
+        val chars = cameraId?.let { id ->
+            val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            runCatching { manager?.getCameraCharacteristics(id) }.getOrNull()
+        }
+        val range = chars?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+        return mapOf(
+            "hasFlash" to (chars?.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false),
+            "exposureMin" to (range?.lower ?: 0),
+            "exposureMax" to (range?.upper ?: 0),
+            "exposureStepEv" to (chars?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toDouble() ?: 0.0),
         )
     }
 
@@ -377,6 +519,7 @@ class FlutterBridge(
                 Log.i(TAG, "thermalStatus: $lastThermalLogged -> $thermal")
                 lastThermalLogged = thermal
             }
+            val audioInput = if (live) pipeline.audioInput() else null
             val payload = mapOf<String, Any>(
                 "bitrateA" to hBps,
                 "bitrateB" to vBps,
@@ -392,6 +535,8 @@ class FlutterBridge(
                 "txBytesB" to (vSnap?.bytes ?: 0L),
                 "txErrorsB" to (vSnap?.errors ?: 0L),
                 "audioLevel" to (if (live) pipeline.audioLevel().toDouble() else 0.0),
+                "audioInputType" to AudioEncoder.inputTypeLabel(audioInput),
+                "audioInputName" to (audioInput?.productName?.toString() ?: "none"),
                 "timestampMs" to System.currentTimeMillis(),
             )
             eventSink?.success(payload)
@@ -514,5 +659,7 @@ class FlutterBridge(
         private const val STATS_INTERVAL_MS = 500L
         private const val PREVIEW_WIDTH = 1920
         private const val PREVIEW_HEIGHT = 1080
+        private const val PUBLISH_WAIT_MS = 15_000L
+        private const val MAX_PUBLISHED_URIS = 20
     }
 }

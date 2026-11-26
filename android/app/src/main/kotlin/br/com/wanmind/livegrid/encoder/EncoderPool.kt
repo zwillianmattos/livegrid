@@ -1,5 +1,7 @@
 package br.com.wanmind.livegrid.encoder
 
+import android.content.Context
+import android.media.AudioDeviceInfo
 import android.media.MediaCodec
 import android.util.Log
 import br.com.wanmind.livegrid.camera.GlRenderer
@@ -9,7 +11,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class EncoderPool(private val recordingsDir: File) {
+class EncoderPool(
+    private val context: Context,
+    private val recordingsDir: File,
+) {
 
     data class Output(
         val horizontalFile: File?,
@@ -26,7 +31,7 @@ class EncoderPool(private val recordingsDir: File) {
     private var horizontalTarget: GlRenderer.Target? = null
     private var verticalTarget: GlRenderer.Target? = null
     private var publishers: Publishers = Publishers(null, null)
-    private var audioEncoder: AudioEncoder? = null
+    @Volatile private var audioEncoder: AudioEncoder? = null
     @Volatile private var audioLevelValue: Float = 0f
 
     fun start(
@@ -47,74 +52,82 @@ class EncoderPool(private val recordingsDir: File) {
             hFile = null
             vFile = null
         }
-        this.publishers = publishers
-        publishers.horizontal?.open()
-        publishers.vertical?.open()
+        try {
+            this.publishers = publishers
+            publishers.horizontal?.open()
+            publishers.vertical?.open()
 
-        val audioFormat = if (recordToDisk) {
-            val audio = AudioEncoder(
-                onSample = { data, pts, flags ->
-                    horizontal?.writeAudioSample(data, pts, flags)
-                    vertical?.writeAudioSample(data, pts, flags)
-                },
-                onLevel = { level -> audioLevelValue = level },
-            )
-            if (audio.start()) {
-                audioEncoder = audio
-                audio.trackFormat()
+            val audioFormat = if (recordToDisk) {
+                val audio = AudioEncoder(
+                    context,
+                    onSample = { data, pts, flags ->
+                        horizontal?.writeAudioSample(data, pts, flags)
+                        vertical?.writeAudioSample(data, pts, flags)
+                    },
+                    onLevel = { level -> audioLevelValue = level },
+                )
+                if (audio.start()) {
+                    audioEncoder = audio
+                    audio.trackFormat()
+                } else {
+                    audio.stop()
+                    Log.w(TAG, "áudio indisponível; gravação seguirá muda")
+                    null
+                }
             } else {
-                Log.w(TAG, "áudio indisponível; gravação seguirá muda")
                 null
             }
-        } else {
-            null
-        }
 
-        horizontalProfile?.let { hp ->
-            val h = HardwareEncoder(
-                hp,
-                hFile,
-                onFrame = { data, pts, flags ->
-                    val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                        flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                    publishers.horizontal?.publish(data, pts, isKey)
-                },
-                audioFormat = audioFormat,
-            )
-            val hSurface = h.start()
-            horizontal = h
-            horizontalTarget = renderer.addTarget(
-                hSurface,
-                hp.width,
-                hp.height,
-                GlRenderer.CROP_HORIZONTAL_16_9,
-                releaseSurface = true,
-            )
-        }
+            horizontalProfile?.let { hp ->
+                val h = HardwareEncoder(
+                    hp,
+                    hFile,
+                    onFrame = { data, pts, flags ->
+                        val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                            flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        publishers.horizontal?.publish(data, pts, isKey)
+                    },
+                    audioFormat = audioFormat,
+                )
+                val hSurface = h.start()
+                horizontal = h
+                horizontalTarget = renderer.addTarget(
+                    hSurface,
+                    hp.width,
+                    hp.height,
+                    GlRenderer.CROP_HORIZONTAL_16_9,
+                    releaseSurface = true,
+                )
+            }
 
-        verticalProfile?.let { vp ->
-            val v = HardwareEncoder(
-                vp,
-                vFile,
-                onFrame = { data, pts, flags ->
-                    val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
-                        flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                    publishers.vertical?.publish(data, pts, isKey)
-                },
-                audioFormat = audioFormat,
-            )
-            val vSurface = v.start()
-            vertical = v
-            verticalTarget = renderer.addTarget(
-                vSurface,
-                vp.width,
-                vp.height,
-                GlRenderer.CROP_VERTICAL_9_16,
-                releaseSurface = true,
-            )
-        }
+            verticalProfile?.let { vp ->
+                val v = HardwareEncoder(
+                    vp,
+                    vFile,
+                    onFrame = { data, pts, flags ->
+                        val isKey = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 ||
+                            flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        publishers.vertical?.publish(data, pts, isKey)
+                    },
+                    audioFormat = audioFormat,
+                )
+                val vSurface = v.start()
+                vertical = v
+                verticalTarget = renderer.addTarget(
+                    vSurface,
+                    vp.width,
+                    vp.height,
+                    GlRenderer.CROP_VERTICAL_9_16,
+                    releaseSurface = true,
+                )
+            }
 
-        Log.i(TAG, "encoders on (file=$recordToDisk, audio=${audioFormat != null}, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
+            Log.i(TAG, "encoders on (file=$recordToDisk, audio=${audioFormat != null}, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
+        } catch (t: Throwable) {
+            Log.e(TAG, "start falhou; desfazendo encoders/áudio: ${t.message}")
+            stop(renderer)
+            throw t
+        }
         return Output(hFile, vFile)
     }
 
@@ -133,6 +146,7 @@ class EncoderPool(private val recordingsDir: File) {
     fun verticalBitrate(): Int = vertical?.bitrateMeter?.sampleBps() ?: 0
     fun currentFps(): Int = horizontal?.fps() ?: vertical?.fps() ?: 0
     fun audioLevel(): Float = if (audioEncoder != null) audioLevelValue else 0f
+    fun audioInput(): AudioDeviceInfo? = audioEncoder?.routedInput()
 
     fun horizontalPublisherSnapshot(): TcpPublisher.Snapshot? =
         publishers.horizontal?.snapshot()

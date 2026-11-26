@@ -8,7 +8,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        bridge = FlutterBridge(applicationContext, flutterEngine)
+        bridge = FlutterBridge(applicationContext, flutterEngine, this)
     }
 
     override fun onDestroy() {
