@@ -21,8 +21,8 @@ class EncoderPool(private val recordingsDir: File) {
         val vertical: TcpPublisher?,
     )
 
-    private var horizontal: HardwareEncoder? = null
-    private var vertical: HardwareEncoder? = null
+    @Volatile private var horizontal: HardwareEncoder? = null
+    @Volatile private var vertical: HardwareEncoder? = null
     private var horizontalTarget: GlRenderer.Target? = null
     private var verticalTarget: GlRenderer.Target? = null
     private var publishers: Publishers = Publishers(null, null)
@@ -51,27 +51,23 @@ class EncoderPool(private val recordingsDir: File) {
         publishers.horizontal?.open()
         publishers.vertical?.open()
 
-        val audioOk = if (recordToDisk) {
+        val audioFormat = if (recordToDisk) {
             val audio = AudioEncoder(
-                onFormat = { format ->
-                    horizontal?.addAudioTrack(format)
-                    vertical?.addAudioTrack(format)
-                },
                 onSample = { data, pts, flags ->
                     horizontal?.writeAudioSample(data, pts, flags)
                     vertical?.writeAudioSample(data, pts, flags)
                 },
                 onLevel = { level -> audioLevelValue = level },
             )
-            val ok = audio.start()
-            if (ok) {
+            if (audio.start()) {
                 audioEncoder = audio
+                audio.trackFormat()
             } else {
                 Log.w(TAG, "áudio indisponível; gravação seguirá muda")
+                null
             }
-            ok
         } else {
-            false
+            null
         }
 
         horizontalProfile?.let { hp ->
@@ -83,7 +79,7 @@ class EncoderPool(private val recordingsDir: File) {
                         flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                     publishers.horizontal?.publish(data, pts, isKey)
                 },
-                expectsAudioTrack = audioOk,
+                audioFormat = audioFormat,
             )
             val hSurface = h.start()
             horizontal = h
@@ -105,7 +101,7 @@ class EncoderPool(private val recordingsDir: File) {
                         flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                     publishers.vertical?.publish(data, pts, isKey)
                 },
-                expectsAudioTrack = audioOk,
+                audioFormat = audioFormat,
             )
             val vSurface = v.start()
             vertical = v
@@ -118,7 +114,7 @@ class EncoderPool(private val recordingsDir: File) {
             )
         }
 
-        Log.i(TAG, "encoders on (file=$recordToDisk, audio=$audioOk, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
+        Log.i(TAG, "encoders on (file=$recordToDisk, audio=${audioFormat != null}, h=${horizontal != null}, v=${vertical != null}, hPub=${publishers.horizontal != null}, vPub=${publishers.vertical != null})")
         return Output(hFile, vFile)
     }
 

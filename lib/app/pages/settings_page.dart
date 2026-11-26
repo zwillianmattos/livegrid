@@ -67,8 +67,8 @@ class _SettingsPageState extends State<SettingsPage> {
           label: 'Horizontal',
           value: _horizontalKbps.toDouble(),
           min: 2000,
-          max: 12000,
-          divisions: 20,
+          max: kHorizontalMaxKbps.toDouble(),
+          divisions: 22,
           display: '${(_horizontalKbps / 1000).toStringAsFixed(1)} Mbps',
           onChanged: (v) => setState(() => _horizontalKbps = v.toInt()),
         ),
@@ -77,8 +77,8 @@ class _SettingsPageState extends State<SettingsPage> {
           label: 'Vertical',
           value: _verticalKbps.toDouble(),
           min: 2000,
-          max: 10000,
-          divisions: 16,
+          max: kVerticalMaxKbps.toDouble(),
+          divisions: 18,
           display: '${(_verticalKbps / 1000).toStringAsFixed(1)} Mbps',
           onChanged: (v) => setState(() => _verticalKbps = v.toInt()),
         ),
@@ -117,7 +117,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _save() {
+  Future<void> _save() async {
     final p = widget.controller.profile;
     widget.controller.updateProfile(
       p.copyWith(
@@ -134,6 +134,11 @@ class _SettingsPageState extends State<SettingsPage> {
         mode: CaptureMode.recording,
       ),
     );
+    if (widget.controller.isLive) {
+      await widget.controller.stop();
+      await widget.controller.start();
+    }
+    if (!mounted) return;
     Navigator.of(context).pop();
   }
 }

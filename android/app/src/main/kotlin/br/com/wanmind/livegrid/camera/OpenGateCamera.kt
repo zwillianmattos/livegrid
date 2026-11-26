@@ -37,6 +37,7 @@ class OpenGateCamera(private val context: Context) {
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var requestBuilder: CaptureRequest.Builder? = null
+    private var availableFpsRanges: Array<Range<Int>> = emptyArray()
 
     @SuppressLint("MissingPermission")
     fun open(
@@ -54,7 +55,10 @@ class OpenGateCamera(private val context: Context) {
                 ?: return onError("no SCALER_STREAM_CONFIGURATION_MAP")
 
             val sizes = configMap.getOutputSizes(SurfaceTexture::class.java) ?: emptyArray()
-            val best = pickSize(sizes, targetWidth, targetHeight) ?: return onError("no size")
+            val usable = sizes.filter { supportsFps(configMap, it, MIN_CAPTURE_FPS) }
+            val best = pickSize(usable.ifEmpty { sizes.toList() }, targetHeight) ?: return onError("no size")
+            availableFpsRanges =
+                chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: emptyArray()
             val sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
             val expRange = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
@@ -183,8 +187,12 @@ class OpenGateCamera(private val context: Context) {
     fun setTargetFps(fps: Int) {
         val builder = requestBuilder ?: return
         val s = session ?: return
+        val range = pickFpsRange(fps) ?: run {
+            Log.w(TAG, "setTargetFps: $fps fora de ${availableFpsRanges.joinToString()}")
+            return
+        }
         try {
-            builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
+            builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
             s.setRepeatingRequest(builder.build(), null, handler)
         } catch (t: Throwable) {
             Log.w(TAG, "setTargetFps: ${t.message}")
@@ -208,15 +216,42 @@ class OpenGateCamera(private val context: Context) {
         thread.quitSafely()
     }
 
-    private fun pickSize(sizes: Array<Size>, targetW: Int?, targetH: Int?): Size? {
+    private fun pickFpsRange(fps: Int): Range<Int>? {
+        if (availableFpsRanges.isEmpty()) return Range(fps, fps)
+        availableFpsRanges.firstOrNull { it.lower == fps && it.upper == fps }?.let { return it }
+        return availableFpsRanges
+            .filter { it.upper == fps }
+            .maxByOrNull { it.lower }
+    }
+
+    private fun supportsFps(
+        map: android.hardware.camera2.params.StreamConfigurationMap,
+        size: Size,
+        fps: Int,
+    ): Boolean {
+        val minDurationNs = try {
+            map.getOutputMinFrameDuration(SurfaceTexture::class.java, size)
+        } catch (_: Throwable) {
+            0L
+        }
+        return minDurationNs <= 0L || minDurationNs <= 1_000_000_000L / fps
+    }
+
+    /**
+     * Open gate: sempre 4:3 (área total do sensor). Os crops 16:9 e 9:16 saem
+     * do GlRenderer. O tier do Dart (altura 16:9 pedida) vira a altura mínima
+     * de sensor que entrega o vertical 9:16 sem upscale: alturaSensor * 9/16
+     * >= alturaPedida. Tier >= 2160 ("Qualidade") usa o maior 4:3 disponível.
+     */
+    private fun pickSize(sizes: List<Size>, targetH: Int?): Size? {
         val valid = sizes.filter { it.width > 0 && it.height > 0 }
         if (valid.isEmpty()) return null
-        if (targetW != null && targetH != null) {
-            valid.firstOrNull { it.width == targetW && it.height == targetH }?.let { return it }
-        }
-        return valid.filter { is4x3(it.width, it.height) }
-            .maxByOrNull { it.width.toLong() * it.height }
-            ?: valid.maxByOrNull { it.width.toLong() * it.height }
+        val fourByThree = valid.filter { is4x3(it.width, it.height) }
+            .sortedBy { it.width.toLong() * it.height }
+        val largest = fourByThree.lastOrNull() ?: return valid.maxByOrNull { it.width.toLong() * it.height }
+        if (targetH == null || targetH >= FULL_SENSOR_TIER_HEIGHT) return largest
+        val minSensorHeight = targetH * 16 / 9
+        return fourByThree.firstOrNull { it.height >= minSensorHeight } ?: largest
     }
 
     private fun is4x3(w: Int, h: Int): Boolean {
@@ -226,5 +261,7 @@ class OpenGateCamera(private val context: Context) {
 
     companion object {
         private const val TAG = "OpenGateCamera"
+        private const val MIN_CAPTURE_FPS = 30
+        private const val FULL_SENSOR_TIER_HEIGHT = 2160
     }
 }

@@ -12,10 +12,10 @@ import 'package:livegrid/app/services/native_bridge.dart';
 
 class _FakeBridge extends NativeBridge {
   _FakeBridge()
-      : super(
-          control: const MethodChannel('livegrid/control.test'),
-          stats: const EventChannel('livegrid/stats.test'),
-        );
+    : super(
+        control: const MethodChannel('livegrid/control.test'),
+        stats: const EventChannel('livegrid/stats.test'),
+      );
 
   final List<String> calls = [];
   final _statsCtrl = StreamController<StreamStats>.broadcast();
@@ -59,9 +59,9 @@ class _FakeBridge extends NativeBridge {
 
   @override
   Future<List<CameraInfo>> listCameras() async => const [
-        CameraInfo(id: '0', lens: CameraLens.back, label: 'main'),
-        CameraInfo(id: '1', lens: CameraLens.front, label: 'selfie'),
-      ];
+    CameraInfo(id: '0', lens: CameraLens.back, label: 'main'),
+    CameraInfo(id: '1', lens: CameraLens.front, label: 'selfie'),
+  ];
 
   @override
   Stream<StreamStats> get statsStream => _statsCtrl.stream;

@@ -1,21 +1,29 @@
+/// Teto dos sliders de bitrate em Configurações (kbps).
+const kHorizontalMaxKbps = 24000;
+const kVerticalMaxKbps = 20000;
+
+/// Tier de captura. `width`/`height` são o tier 16:9 pedido ao nativo:
+/// iOS abre o preset 16:9 correspondente; Android abre o sensor 4:3 inteiro
+/// (open gate) com altura suficiente pro vertical 9:16 sem upscale
+/// (ver `OpenGateCamera.pickSize`).
 enum CaptureResolution {
   economic(
     1280,
     720,
     'Econômico',
-    'Frio. Horizontal 720p · Vertical 405×720 (upscale forte).',
+    'Frio. Horizontal 720p · Vertical 720×1280.',
   ),
   balanced(
     1920,
     1080,
     'Equilibrado',
-    'Padrão. Horizontal 1080p nativo · Vertical 607×1080 (sub-HD).',
+    'Padrão. Horizontal 1080p · Vertical 1080×1920.',
   ),
   quality(
     3840,
     2160,
     'Qualidade',
-    'Aquece. Horizontal 1080p (downscale) · Vertical 1215×2160 nativo.',
+    'Sensor inteiro. Horizontal 1080p · Vertical 1080×1920 com mais detalhe. Aquece.',
   );
 
   const CaptureResolution(this.width, this.height, this.label, this.summary);
@@ -59,7 +67,7 @@ enum CaptureResolution {
           width: 1280,
           height: 720,
           fps: 30,
-          bitrateBps: 3000000,
+          bitrateBps: 6000000,
           gop: 30,
         );
       case CaptureResolution.balanced:
@@ -67,7 +75,7 @@ enum CaptureResolution {
           width: 1920,
           height: 1080,
           fps: 30,
-          bitrateBps: 5000000,
+          bitrateBps: 12000000,
           gop: 30,
         );
       case CaptureResolution.quality:
@@ -75,19 +83,23 @@ enum CaptureResolution {
           width: 1920,
           height: 1080,
           fps: 30,
-          bitrateBps: 6000000,
+          bitrateBps: 16000000,
           gop: 30,
         );
     }
   }
 
+  /// Saída 9:16 padrão. Android escala o crop no shader; iOS ignora estas
+  /// dimensões e grava no tamanho do crop (ver `FlutterBridge.swift`).
   EncoderProfile get defaultVerticalEncoder {
-    final w = verticalCropWidth;
-    final h = verticalCropHeight;
+    final (w, h) = switch (this) {
+      CaptureResolution.economic => (720, 1280),
+      _ => (1080, 1920),
+    };
     final bps = switch (this) {
-      CaptureResolution.economic => 2000000,
-      CaptureResolution.balanced => 3000000,
-      CaptureResolution.quality => 5000000,
+      CaptureResolution.economic => 5000000,
+      CaptureResolution.balanced => 10000000,
+      CaptureResolution.quality => 14000000,
     };
     return EncoderProfile(
       width: w,
@@ -150,22 +162,6 @@ class EncoderProfile {
   final int fps;
   final int bitrateBps;
   final int gop;
-
-  static const horizontal1080p = EncoderProfile(
-    width: 1920,
-    height: 1080,
-    fps: 30,
-    bitrateBps: 4000000,
-    gop: 30,
-  );
-
-  static const vertical1080p = EncoderProfile(
-    width: 1080,
-    height: 1920,
-    fps: 30,
-    bitrateBps: 3500000,
-    gop: 30,
-  );
 
   EncoderProfile copyWith({int? bitrateBps, int? fps, int? gop}) =>
       EncoderProfile(

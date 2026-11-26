@@ -29,16 +29,51 @@ void main() {
       expect(CaptureResolution.quality.defaultHorizontalEncoder.height, 1080);
     });
 
-    test('defaultVerticalEncoder = crop nativo', () {
-      final v = CaptureResolution.balanced.defaultVerticalEncoder;
-      expect(v.width, CaptureResolution.balanced.verticalCropWidth);
-      expect(v.height, CaptureResolution.balanced.verticalCropHeight);
+    test(
+      'defaultVerticalEncoder sai em 9:16 padrão, não no tamanho do crop',
+      () {
+        final e = CaptureResolution.economic.defaultVerticalEncoder;
+        expect((e.width, e.height), (720, 1280));
+        for (final r in [
+          CaptureResolution.balanced,
+          CaptureResolution.quality,
+        ]) {
+          final v = r.defaultVerticalEncoder;
+          expect((v.width, v.height), (1080, 1920), reason: r.name);
+        }
+      },
+    );
+
+    test('bitrate de gravação cresce com o tier e cabe nos sliders', () {
+      final tiers = CaptureResolution.values;
+      for (var i = 1; i < tiers.length; i++) {
+        expect(
+          tiers[i].defaultHorizontalEncoder.bitrateBps,
+          greaterThan(tiers[i - 1].defaultHorizontalEncoder.bitrateBps),
+        );
+      }
+      for (final r in tiers) {
+        expect(
+          r.defaultHorizontalEncoder.bitrateBps,
+          lessThanOrEqualTo(kHorizontalMaxKbps * 1000),
+        );
+        expect(
+          r.defaultVerticalEncoder.bitrateBps,
+          lessThanOrEqualTo(kVerticalMaxKbps * 1000),
+        );
+      }
+      expect(
+        CaptureResolution.balanced.defaultHorizontalEncoder.bitrateBps,
+        greaterThanOrEqualTo(10000000),
+      );
     });
   });
 
   group('EncoderProfile', () {
     test('copyWith preserva dimensões e troca bitrate', () {
-      final p = EncoderProfile.horizontal1080p.copyWith(bitrateBps: 4000000);
+      final p = CaptureResolution.balanced.defaultHorizontalEncoder.copyWith(
+        bitrateBps: 4000000,
+      );
       expect(p.width, 1920);
       expect(p.height, 1080);
       expect(p.bitrateBps, 4000000);
@@ -46,7 +81,14 @@ void main() {
     });
 
     test('toMap serializa os campos', () {
-      final m = EncoderProfile.vertical1080p.toMap();
+      const p = EncoderProfile(
+        width: 1080,
+        height: 1920,
+        fps: 30,
+        bitrateBps: 3500000,
+        gop: 30,
+      );
+      final m = p.toMap();
       expect(m['width'], 1080);
       expect(m['height'], 1920);
       expect(m['fps'], 30);

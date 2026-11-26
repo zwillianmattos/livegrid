@@ -6,6 +6,7 @@ import android.opengl.GLES20
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
@@ -30,6 +31,7 @@ class GlRenderer(private val core: GlCore) {
     private var aTexCoord = 0
     private var uTexMatrix = 0
     private var uCrop = 0
+    private var uStep = 0
     private var oesTextureId = 0
 
     private lateinit var inputSurfaceTexture: SurfaceTexture
@@ -38,6 +40,9 @@ class GlRenderer(private val core: GlCore) {
     private var sensorWidth = 0
     private var sensorHeight = 0
     private var rotationDegrees = 0
+
+    // null = ainda não decidido pra esta sessão de câmera.
+    private var cameraClockIsBoottime: Boolean? = null
 
     @Volatile
     private var verticalCropCenterX: Float = 0.5f
@@ -64,6 +69,7 @@ class GlRenderer(private val core: GlCore) {
             aTexCoord = GLES20.glGetAttribLocation(program, "aTexCoord")
             uTexMatrix = GLES20.glGetUniformLocation(program, "uTexMatrix")
             uCrop = GLES20.glGetUniformLocation(program, "uCrop")
+            uStep = GLES20.glGetUniformLocation(program, "uStep")
 
             val tex = IntArray(1)
             GLES20.glGenTextures(1, tex, 0)
@@ -99,6 +105,7 @@ class GlRenderer(private val core: GlCore) {
             inputSurfaceTexture.setDefaultBufferSize(width, height)
             val rotation = ((sensorOrientation - displayRotation) % 360 + 360) % 360
             rotationDegrees = rotation
+            cameraClockIsBoottime = null
             if (rotation == 90 || rotation == 270) {
                 sensorWidth = height
                 sensorHeight = width
@@ -141,7 +148,7 @@ class GlRenderer(private val core: GlCore) {
     private fun drawFrame() {
         if (sensorWidth == 0 || sensorHeight == 0) return
         inputSurfaceTexture.updateTexImage()
-        val ts = inputSurfaceTexture.timestamp
+        val ts = toMonotonicNanos(inputSurfaceTexture.timestamp)
 
         val snapshot = targets.toList()
         for (target in snapshot) {
@@ -152,6 +159,24 @@ class GlRenderer(private val core: GlCore) {
             } catch (_: Throwable) {
             }
         }
+    }
+
+    /**
+     * Câmeras com SENSOR_INFO_TIMESTAMP_SOURCE=REALTIME (maioria dos Samsung)
+     * carimbam frames em elapsedRealtimeNanos (inclui deep sleep). O áudio usa
+     * System.nanoTime. Sem converter, as trilhas do MP4 ficam horas fora de
+     * sincronia e o muxer descarta/desloca o áudio.
+     */
+    private fun toMonotonicNanos(ts: Long): Long {
+        if (ts <= 0) return ts
+        val mono = System.nanoTime()
+        val boot = SystemClock.elapsedRealtimeNanos()
+        val isBoot = cameraClockIsBoottime
+            ?: (kotlin.math.abs(ts - boot) < kotlin.math.abs(ts - mono)).also {
+                cameraClockIsBoottime = it
+                Log.i(TAG, "camera clock=${if (it) "BOOTTIME" else "MONOTONIC"} offset=${(boot - mono) / 1_000_000}ms")
+            }
+        return if (isBoot) ts - (boot - mono) else ts
     }
 
     private fun drawInto(target: Target) {
@@ -168,7 +193,10 @@ class GlRenderer(private val core: GlCore) {
         GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 4 * 4, vertexBuffer)
 
         GLES20.glUniformMatrix4fv(uTexMatrix, 1, false, finalTexMatrix, 0)
-        GLES20.glUniform4fv(uCrop, 1, cropUniform(target.cropMode), 0)
+        val crop = cropUniform(target.cropMode)
+        GLES20.glUniform4fv(uCrop, 1, crop, 0)
+        // Pegada de um pixel de saída em UV de origem; o fragment amostra 2x2 dentro dela.
+        GLES20.glUniform2f(uStep, crop[0] / target.width, crop[1] / target.height)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
@@ -236,10 +264,15 @@ class GlRenderer(private val core: GlCore) {
             attribute vec2 aTexCoord;
             uniform mat4 uTexMatrix;
             uniform vec4 uCrop;
+            uniform vec2 uStep;
             varying highp vec2 vTexCoord;
+            varying highp vec2 vStepX;
+            varying highp vec2 vStepY;
             void main() {
                 vec2 uv = aTexCoord * uCrop.xy + uCrop.zw;
                 vTexCoord = (uTexMatrix * vec4(uv, 0.0, 1.0)).xy;
+                vStepX = (uTexMatrix * vec4(uStep.x * 0.25, 0.0, 0.0, 0.0)).xy;
+                vStepY = (uTexMatrix * vec4(0.0, uStep.y * 0.25, 0.0, 0.0)).xy;
                 gl_Position = vec4(aPosition, 0.0, 1.0);
             }
         """
@@ -249,8 +282,14 @@ class GlRenderer(private val core: GlCore) {
             precision highp float;
             uniform samplerExternalOES sTexture;
             varying highp vec2 vTexCoord;
+            varying highp vec2 vStepX;
+            varying highp vec2 vStepY;
             void main() {
-                gl_FragColor = texture2D(sTexture, vTexCoord);
+                vec4 c = texture2D(sTexture, vTexCoord - vStepX - vStepY);
+                c += texture2D(sTexture, vTexCoord + vStepX - vStepY);
+                c += texture2D(sTexture, vTexCoord - vStepX + vStepY);
+                c += texture2D(sTexture, vTexCoord + vStepX + vStepY);
+                gl_FragColor = c * 0.25;
             }
         """
     }

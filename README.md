@@ -125,11 +125,13 @@ OBS já tem **Câmera Virtual** embutida. No menu do OBS → **Iniciar Câmera V
 
 ## Perfis de captura
 
-| Perfil | Captura | Encoder horizontal | Bitrate | Crop vertical (recording) |
+| Perfil | Captura Android (open gate 4:3) | Horizontal | Vertical | Bitrate H / V |
 |---|---|---|---|---|
-| Econômico | 1280×720 (4:3) | 1280×720 @ 30fps | 3 Mbps CBR | 405×720 |
-| Equilibrado | 1920×1080 (4:3) | 1920×1080 @ 30fps | 5 Mbps CBR | 607×1080 |
-| Qualidade | 3840×2160 (4:3) | 1920×1080 @ 30fps | 6 Mbps CBR | 1215×2160 (FHD+) |
+| Econômico | menor 4:3 com altura ≥ 1280 | 1280×720 | 720×1280 | 6 / 5 Mbps |
+| Equilibrado | menor 4:3 com altura ≥ 1920 | 1920×1080 | 1080×1920 | 12 / 10 Mbps |
+| Qualidade | sensor inteiro (maior 4:3) | 1920×1080 | 1080×1920 | 16 / 14 Mbps |
+
+No iOS a captura usa o preset 16:9 do tier (720p / 1080p / 4K) e o vertical sai no tamanho do crop.
 
 A política térmica reduz bitrate e FPS automaticamente conforme o aparelho aquece, e desliga o feed vertical em modo crítico.
 
