@@ -30,6 +30,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
     private var vBytesWindow: Int = 0
     private let byteLock = NSLock()
     private var lastSampleNanos: UInt64 = 0
+    private let finishGroup = DispatchGroup()
 
     init(messenger: FlutterBinaryMessenger, textures: FlutterTextureRegistry) {
         self.control = FlutterMethodChannel(name: "livegrid/control", binaryMessenger: messenger)
@@ -113,6 +114,10 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             result("unknown")
         case "deviceIp":
             result(Self.localWifiIp())
+        case "shareFile":
+            handleShareFile(call, result: result)
+        case "openGallery":
+            handleOpenGallery(result: result)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -123,18 +128,18 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         preview = p
         let cameraId = defaultBackCameraId()
         activeCameraId = cameraId
+        result(NSNumber(value: p.textureId))
+        if AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
+            p.startInBackground(cameraId: cameraId)
+            return
+        }
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
                 if granted {
-                    do {
-                        try p.start(cameraId: cameraId)
-                    } catch {
-                        NSLog("preview start failed: \(error.localizedDescription)")
-                    }
+                    p.startInBackground(cameraId: cameraId)
                 } else {
                     NSLog("camera permission denied")
                 }
-                result(NSNumber(value: p.textureId))
             }
         }
     }
@@ -263,9 +268,15 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let hUrl = dir.appendingPathComponent("livegrid_\(stamp)_horizontal.mp4")
         let vUrl = dir.appendingPathComponent("livegrid_\(stamp)_vertical.mp4")
 
+        preview?.ensureAudio()
+        let audioChannels = preview?.audioChannelCount ?? 0
         do {
-            let hRec = try FileRecorder(url: hUrl, width: hW, height: hH, fps: hFps, bitrate: hBps)
-            let vRec = try FileRecorder(url: vUrl, width: vCropW, height: vCropH, fps: vFps, bitrate: vBps)
+            let hRec = try FileRecorder(
+                url: hUrl, width: hW, height: hH, fps: hFps, bitrate: hBps, audioChannels: audioChannels
+            )
+            let vRec = try FileRecorder(
+                url: vUrl, width: vCropW, height: vCropH, fps: vFps, bitrate: vBps, audioChannels: audioChannels
+            )
             horizontalRecorder = hRec
             verticalRecorder = vRec
         } catch {
@@ -316,14 +327,83 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let vRec = verticalRecorder
         horizontalRecorder = nil
         verticalRecorder = nil
-        hRec?.finish { url in
-            if let url = url { Self.saveToPhotoLibrary(url: url) }
-            _ = hRec
+        if let hRec = hRec {
+            finishGroup.enter()
+            hRec.finish { [finishGroup] url in
+                if let url = url { Self.saveToPhotoLibrary(url: url) }
+                _ = hRec
+                finishGroup.leave()
+            }
         }
-        vRec?.finish { url in
-            if let url = url { Self.saveToPhotoLibrary(url: url) }
-            _ = vRec
+        if let vRec = vRec {
+            finishGroup.enter()
+            vRec.finish { [finishGroup] url in
+                if let url = url { Self.saveToPhotoLibrary(url: url) }
+                _ = vRec
+                finishGroup.leave()
+            }
         }
+    }
+
+    private func handleShareFile(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String, !path.isEmpty else {
+            result(FlutterError(code: "bad_args", message: "path ausente", details: nil))
+            return
+        }
+        // stop() fecha o AVAssetWriter de forma assíncrona; compartilhar antes gera um MP4 sem moov.
+        var replied = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+            guard !replied else { return }
+            replied = true
+            result(FlutterError(code: "publish_pending", message: "gravação ainda sendo finalizada", details: nil))
+        }
+        finishGroup.notify(queue: .main) {
+            guard !replied else { return }
+            replied = true
+            let url = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                result(FlutterError(code: "file_not_found", message: "arquivo não encontrado: \(path)", details: nil))
+                return
+            }
+            guard let presenter = Self.topViewController() else {
+                result(FlutterError(code: "no_view_controller", message: "sem view controller para apresentar", details: nil))
+                return
+            }
+            let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if let popover = sheet.popoverPresentationController {
+                popover.sourceView = presenter.view
+                popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+            presenter.present(sheet, animated: true)
+            result(nil)
+        }
+    }
+
+    private func handleOpenGallery(result: @escaping FlutterResult) {
+        guard let url = URL(string: "photos-redirect://") else {
+            result(FlutterError(code: "no_gallery", message: "URL inválida", details: nil))
+            return
+        }
+        UIApplication.shared.open(url, options: [:]) { success in
+            if success {
+                result(nil)
+            } else {
+                result(FlutterError(code: "no_gallery", message: "não foi possível abrir o app Fotos", details: nil))
+            }
+        }
+    }
+
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap { $0.windows }
+        let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
     }
 
     private static func saveToPhotoLibrary(url: URL) {
@@ -413,6 +493,7 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
         let hBps = dt > 0 ? Int(Double(h * 8) / dt) : 0
         let vBps = dt > 0 ? Int(Double(v * 8) / dt) : 0
 
+        let route = preview?.audioRoute() ?? (type: "none", name: "")
         let hSnap = horizontalPublisher?.snapshot()
         let vSnap = verticalPublisher?.snapshot()
 
@@ -430,6 +511,9 @@ final class FlutterBridge: NSObject, FlutterStreamHandler {
             "txDatagramsB": vSnap?.datagrams ?? 0,
             "txBytesB": vSnap?.bytes ?? 0,
             "txErrorsB": vSnap?.errors ?? 0,
+            "audioLevel": (isLive && captureMode == "recording") ? Double(preview?.audioLevel ?? 0) : 0.0,
+            "audioInputType": route.type,
+            "audioInputName": route.name,
             "timestampMs": Int(Date().timeIntervalSince1970 * 1000),
         ]
         sink(payload)

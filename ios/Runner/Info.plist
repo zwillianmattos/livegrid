@@ -13,7 +13,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>LiveGrid usa a câmera para capturar e transmitir vídeo ao vivo.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LiveGrid captura áudio junto com o vídeo durante a transmissão.</string>
+	<string>LiveGrid grava o áudio do microfone junto com o vídeo.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>LiveGrid expõe dois feeds SRT na rede local para o OBS conectar.</string>
 	<key>UIBackgroundModes</key>

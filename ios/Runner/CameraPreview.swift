@@ -3,10 +3,12 @@ import CoreVideo
 import Flutter
 import Foundation
 
-final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSampleBufferDelegate {
+final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSampleBufferDelegate,
+    AVCaptureAudioDataOutputSampleBufferDelegate {
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "livegrid.camera.queue")
+    private let sessionQueue = DispatchQueue(label: "livegrid.camera.session")
     private let bufferLock = NSLock()
     private var latestBuffer: CVPixelBuffer?
     private weak var registry: FlutterTextureRegistry?
@@ -21,6 +23,14 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     private var verticalCropHeight: Int = 0
     private var verticalCropCenterX: CGFloat = 0.5
 
+    private let audioQueue = DispatchQueue(label: "livegrid.audio.queue")
+    private let audioLock = NSLock()
+    private var audioRecorders: [FileRecorder] = []
+    private var audioAttached = false
+    private var lastAudioLevel: Float = 0
+    private var lastAudioChannels: Int = 0
+    private var routeObserver: NSObjectProtocol?
+
     func setVerticalCropCenter(_ value: CGFloat) {
         let clamped = max(0, min(1, value))
         queue.async { [weak self] in
@@ -32,6 +42,20 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         super.init()
         self.registry = registry
         textureId = registry.register(self)
+        session.automaticallyConfiguresApplicationAudioSession = true
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: nil
+        ) { note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+            let input = AVAudioSession.sharedInstance().currentRoute.inputs.first
+            NSLog("audio route changed reason=\(reason) input=\(input?.portType.rawValue ?? "none") name=\(input?.portName ?? "")")
+        }
+    }
+
+    deinit {
+        if let o = routeObserver { NotificationCenter.default.removeObserver(o) }
     }
 
     func setEncoders(
@@ -58,6 +82,9 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         queue.sync {
             horizontalRecorder = horizontal
             verticalRecorder = vertical
+            audioLock.lock()
+            audioRecorders = [horizontal, vertical].compactMap { $0 }
+            audioLock.unlock()
             if vertical != nil {
                 self.verticalCropWidth = verticalCropWidth
                 self.verticalCropHeight = verticalCropHeight
@@ -82,9 +109,39 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
     private(set) var captureHeight: Int?
 
     func start(cameraId: String?, captureWidth: Int? = nil, captureHeight: Int? = nil) throws {
-        let preset = presetFor(width: captureWidth, height: captureHeight)
         self.captureWidth = captureWidth
         self.captureHeight = captureHeight
+        try sessionQueue.sync {
+            try configure(cameraId: cameraId, captureWidth: captureWidth, captureHeight: captureHeight)
+        }
+        startRunningAsync()
+    }
+
+    // startRunning blocks for hundreds of ms; init replies with the textureId
+    // and lets frames arrive whenever the session is up.
+    func startInBackground(cameraId: String?) {
+        captureWidth = nil
+        captureHeight = nil
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            do {
+                try self.configure(cameraId: cameraId, captureWidth: nil, captureHeight: nil)
+                if !self.session.isRunning { self.session.startRunning() }
+            } catch {
+                NSLog("preview start failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func startRunningAsync() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, !self.session.isRunning else { return }
+            self.session.startRunning()
+        }
+    }
+
+    private func configure(cameraId: String?, captureWidth: Int?, captureHeight: Int?) throws {
+        let preset = presetFor(width: captureWidth, height: captureHeight)
         queue.sync {
             session.beginConfiguration()
             session.inputs.forEach { session.removeInput($0) }
@@ -128,17 +185,91 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
                 }
             }
 
+            attachAudioLocked()
             session.commitConfiguration()
         }
+    }
 
-        if !session.isRunning {
-            session.startRunning()
+    func ensureAudio() {
+        sessionQueue.sync {
+            queue.sync {
+                guard !audioAttached, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
+                session.beginConfiguration()
+                attachAudioLocked()
+                session.commitConfiguration()
+            }
+        }
+    }
+
+    var audioChannelCount: Int {
+        audioLock.lock()
+        let attached = audioAttached
+        let last = lastAudioChannels
+        audioLock.unlock()
+        guard attached else { return 0 }
+        if last > 0 { return min(last, 2) }
+        return max(1, min(AVAudioSession.sharedInstance().inputNumberOfChannels, 2))
+    }
+
+    var audioLevel: Float {
+        audioLock.lock()
+        defer { audioLock.unlock() }
+        return audioAttached ? lastAudioLevel : 0
+    }
+
+    func audioRoute() -> (type: String, name: String) {
+        audioLock.lock()
+        let attached = audioAttached
+        audioLock.unlock()
+        guard attached, let input = AVAudioSession.sharedInstance().currentRoute.inputs.first else {
+            return ("none", "")
+        }
+        let type: String
+        switch input.portType {
+        case .builtInMic: type = "builtin"
+        case .usbAudio: type = "usb"
+        case .headsetMic, .lineIn: type = "wired"
+        case .bluetoothHFP, .bluetoothLE, .bluetoothA2DP: type = "bluetooth"
+        default: type = "wired"
+        }
+        return (type, input.portName)
+    }
+
+    private func attachAudioLocked() {
+        audioLock.lock()
+        audioAttached = false
+        lastAudioLevel = 0
+        lastAudioChannels = 0
+        audioLock.unlock()
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+              let mic = AVCaptureDevice.default(for: .audio) else { return }
+        do {
+            let micInput = try AVCaptureDeviceInput(device: mic)
+            guard session.canAddInput(micInput) else {
+                NSLog("audio input rejected by session; recording mute")
+                return
+            }
+            let output = AVCaptureAudioDataOutput()
+            guard session.canAddOutput(output) else {
+                NSLog("audio output rejected by session; recording mute")
+                return
+            }
+            session.addInput(micInput)
+            output.setSampleBufferDelegate(self, queue: audioQueue)
+            session.addOutput(output)
+            audioLock.lock()
+            audioAttached = true
+            audioLock.unlock()
+        } catch {
+            NSLog("audio input failed: \(error.localizedDescription); recording mute")
         }
     }
 
     func stop() {
-        if session.isRunning {
-            session.stopRunning()
+        sessionQueue.sync {
+            if session.isRunning {
+                session.stopRunning()
+            }
         }
     }
 
@@ -146,6 +277,10 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         stop()
         setEncoders(horizontal: nil, vertical: nil)
         setRecorders(horizontal: nil, vertical: nil)
+        if let o = routeObserver {
+            NotificationCenter.default.removeObserver(o)
+            routeObserver = nil
+        }
         if let reg = registry, textureId >= 0 {
             reg.unregisterTexture(textureId)
         }
@@ -157,6 +292,10 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        if output is AVCaptureAudioDataOutput {
+            handleAudio(sampleBuffer)
+            return
+        }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         bufferLock.lock()
@@ -175,6 +314,77 @@ final class CameraPreview: NSObject, FlutterTexture, AVCaptureVideoDataOutputSam
             verticalEncoder?.encode(pixelBuffer: cropped, pts: pts)
             verticalRecorder?.append(pixelBuffer: cropped, pts: pts)
         }
+    }
+
+    private func handleAudio(_ sampleBuffer: CMSampleBuffer) {
+        let (level, channels) = Self.measure(sampleBuffer)
+        audioLock.lock()
+        lastAudioLevel = level
+        if channels > 0 { lastAudioChannels = channels }
+        let recorders = audioRecorders
+        audioLock.unlock()
+        for r in recorders { r.appendAudio(sampleBuffer) }
+    }
+
+    private static func measure(_ sampleBuffer: CMSampleBuffer) -> (Float, Int) {
+        guard let fmt = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM else { return (0, 0) }
+        let channels = Int(asbd.mChannelsPerFrame)
+        var sizeNeeded = 0
+        var status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: &sizeNeeded,
+            bufferListOut: nil,
+            bufferListSize: 0,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: 0,
+            blockBufferOut: nil
+        )
+        guard status == noErr, sizeNeeded > 0 else { return (0, channels) }
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: sizeNeeded, alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { raw.deallocate() }
+        let ablPtr = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        var blockBuffer: CMBlockBuffer?
+        status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: ablPtr,
+            bufferListSize: sizeNeeded,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr else { return (0, channels) }
+        let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        var sum: Double = 0
+        var count = 0
+        for buffer in UnsafeMutableAudioBufferListPointer(ablPtr) {
+            guard let data = buffer.mData else { continue }
+            let bytes = Int(buffer.mDataByteSize)
+            if isFloat && asbd.mBitsPerChannel == 32 {
+                let p = data.assumingMemoryBound(to: Float.self)
+                let n = bytes / 4
+                for i in 0..<n { let v = Double(p[i]); sum += v * v }
+                count += n
+            } else if asbd.mBitsPerChannel == 16 {
+                let p = data.assumingMemoryBound(to: Int16.self)
+                let n = bytes / 2
+                for i in 0..<n { let v = Double(p[i]) / 32768.0; sum += v * v }
+                count += n
+            } else if asbd.mBitsPerChannel == 32 {
+                let p = data.assumingMemoryBound(to: Int32.self)
+                let n = bytes / 4
+                for i in 0..<n { let v = Double(p[i]) / 2147483648.0; sum += v * v }
+                count += n
+            }
+        }
+        guard count > 0 else { return (0, channels) }
+        return (Float(min(1.0, (sum / Double(count)).squareRoot())), channels)
     }
 
     func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>? {
