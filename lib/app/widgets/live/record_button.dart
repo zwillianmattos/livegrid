@@ -20,45 +20,36 @@ class RecordButton extends StatelessWidget {
     final busy =
         state == SessionState.starting || state == SessionState.stopping;
     final live = state == SessionState.live || state == SessionState.degraded;
+    final label = live ? 'Parar gravação' : 'Gravar';
 
-    return GestureDetector(
-      onTap: busy ? null : (live ? onStop : onStart),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: 68,
-        height: 68,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.35),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.9),
-            width: 2.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 20,
-              offset: const Offset(0, 6),
+    return Semantics(
+      button: true,
+      enabled: !busy,
+      label: label,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          onTap: busy ? null : (live ? onStop : onStart),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.text, width: 3),
             ),
-          ],
-        ),
-        alignment: Alignment.center,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          width: live ? 22 : 52,
-          height: live ? 22 : 52,
-          decoration: BoxDecoration(
-            color: busy ? AppColors.textFaint : AppColors.live,
-            borderRadius: BorderRadius.circular(live ? 4 : 999),
-            boxShadow: live
-                ? [
-                    BoxShadow(
-                      color: AppColors.live.withValues(alpha: 0.4),
-                      blurRadius: 12,
-                    ),
-                  ]
-                : null,
+            alignment: Alignment.center,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              width: live ? 22 : 48,
+              height: live ? 22 : 48,
+              decoration: BoxDecoration(
+                color: busy ? AppColors.textFaint : AppColors.live,
+                borderRadius: BorderRadius.circular(live ? 0 : 24),
+              ),
+            ),
           ),
         ),
       ),

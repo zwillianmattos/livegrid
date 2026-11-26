@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../models/camera_info.dart';
 import '../models/network_profile.dart';
@@ -11,18 +9,30 @@ import '../models/session_state.dart';
 import '../models/stream_stats.dart';
 import '../models/thermal_status.dart';
 import '../services/native_bridge.dart';
+import '../services/permission_probe.dart';
 
 export '../services/native_bridge.dart' show CameraCapabilities;
+export '../services/permission_probe.dart';
 
 typedef PermissionGate = Future<bool> Function();
 
 class SessionController extends ChangeNotifier {
-  SessionController({NativeBridge? bridge, PermissionGate? permissionGate})
-    : _bridge = bridge ?? NativeBridge(),
-      _permissionGate = permissionGate ?? _defaultPermissionGate;
+  SessionController({
+    NativeBridge? bridge,
+    PermissionGate? permissionGate,
+    PermissionProbe? permissionProbe,
+  }) : _bridge = bridge ?? NativeBridge(),
+       _permissionGate = permissionGate,
+       _permissionProbe = permissionProbe ?? const SystemPermissionProbe();
 
   final NativeBridge _bridge;
-  final PermissionGate _permissionGate;
+  final PermissionGate? _permissionGate;
+  final PermissionProbe _permissionProbe;
+  PermissionStatuses _permissions = const {
+    AppPermission.camera: AppPermissionStatus.pending,
+    AppPermission.microphone: AppPermissionStatus.pending,
+    AppPermission.photos: AppPermissionStatus.pending,
+  };
 
   SessionState _state = SessionState.idle;
   int? _textureId;
@@ -52,6 +62,31 @@ class SessionController extends ChangeNotifier {
   bool get torchEnabled => _torchEnabled;
   int get exposureValue => _exposureValue;
   CameraCapabilities get capabilities => _capabilities;
+  PermissionStatuses get permissions => Map.unmodifiable(_permissions);
+
+  AppPermissionStatus permissionStatus(AppPermission permission) =>
+      _permissions[permission] ?? AppPermissionStatus.pending;
+
+  bool get permissionsReady =>
+      permissionStatus(AppPermission.camera) == AppPermissionStatus.granted;
+
+  bool get hasPermanentlyDeniedPermission =>
+      _permissions.values.contains(AppPermissionStatus.permanentlyDenied);
+
+  Future<void> checkPermissions() async {
+    _setPermissions(await _permissionProbe.check());
+  }
+
+  Future<void> requestPermissions() async {
+    _setPermissions(await _permissionProbe.request());
+  }
+
+  Future<bool> openPermissionSettings() => _permissionProbe.openSettings();
+
+  void _setPermissions(PermissionStatuses statuses) {
+    _permissions = {..._permissions, ...statuses};
+    notifyListeners();
+  }
 
   CameraInfo? get selectedCamera {
     if (_cameras.isEmpty) return null;
@@ -65,15 +100,25 @@ class SessionController extends ChangeNotifier {
   bool get isLive =>
       _state == SessionState.live || _state == SessionState.degraded;
 
-  Future<void> initialize() async {
+  Future<void>? _initFuture;
+  Future<void>? _networkInfoFuture;
+
+  Future<void> initialize() => _initFuture ??= _initialize();
+
+  Future<void> _initialize() async {
     try {
       _textureId = await _bridge.init();
-      _wifiBand = await _bridge.wifiBand();
-      final ip = await _bridge.deviceIp();
-      if (ip != null && ip.isNotEmpty) {
-        _network = _network.copyWith(obsHost: ip);
-      }
-      _cameras = await _bridge.listCameras();
+      _statsSub ??= _bridge.statsStream.listen(
+        _onStats,
+        onError: _onStatsError,
+      );
+      notifyListeners();
+      final results = await Future.wait<Object>([
+        _bridge.listCameras(),
+        _bridge.cameraCapabilities(),
+      ]);
+      _cameras = results[0] as List<CameraInfo>;
+      _capabilities = results[1] as CameraCapabilities;
       if (_profile.cameraId == null && _cameras.isNotEmpty) {
         final back = _cameras.firstWhere(
           (c) => c.lens == CameraLens.back,
@@ -81,16 +126,26 @@ class SessionController extends ChangeNotifier {
         );
         _profile = _profile.copyWith(cameraId: back.id);
       }
-      _capabilities = await _bridge.cameraCapabilities();
-      _statsSub ??= _bridge.statsStream.listen(
-        _onStats,
-        onError: _onStatsError,
-      );
       notifyListeners();
     } catch (e) {
+      _initFuture = null;
       _setError('init failed: $e');
     }
   }
+
+  Future<void> _ensureNetworkInfo() => _networkInfoFuture ??= () async {
+    try {
+      _wifiBand = await _bridge.wifiBand();
+      final ip = await _bridge.deviceIp();
+      if (ip != null && ip.isNotEmpty) {
+        _network = _network.copyWith(obsHost: ip);
+      }
+      notifyListeners();
+    } catch (e) {
+      _networkInfoFuture = null;
+      rethrow;
+    }
+  }();
 
   Future<void> refreshCameras() async {
     _cameras = await _bridge.listCameras();
@@ -149,10 +204,12 @@ class SessionController extends ChangeNotifier {
     _state = SessionState.starting;
     notifyListeners();
     try {
-      if (!await _permissionGate()) {
-        _setError('Permissão de câmera/microfone/notificação negada');
+      final gate = _permissionGate ?? _defaultPermissionGate;
+      if (!await gate()) {
+        _setError('Permissão de câmera negada');
         return;
       }
+      if (_profile.mode == CaptureMode.live) await _ensureNetworkInfo();
       _lastStart = await _bridge.startCapture(
         profile: _profile,
         network: _network,
@@ -164,13 +221,11 @@ class SessionController extends ChangeNotifier {
     }
   }
 
-  static Future<bool> _defaultPermissionGate() async {
-    final needed = <Permission>[Permission.camera, Permission.microphone];
-    if (Platform.isAndroid) {
-      needed.add(Permission.notification);
-    }
-    final statuses = await needed.request();
-    return statuses.values.every((s) => s.isGranted || s.isLimited);
+  Future<bool> _defaultPermissionGate() async {
+    _permissions = {..._permissions, ...await _permissionProbe.check()};
+    if (permissionsReady) return true;
+    _permissions = {..._permissions, ...await _permissionProbe.request()};
+    return permissionsReady;
   }
 
   Future<void> stop() async {
@@ -298,6 +353,22 @@ class SessionController extends ChangeNotifier {
     _errorMessage = message;
     _state = SessionState.error;
     notifyListeners();
+  }
+
+  Future<void> shareFile(String path) async {
+    try {
+      await _bridge.shareFile(path);
+    } on Exception catch (e) {
+      debugPrint('shareFile failed: $e');
+    }
+  }
+
+  Future<void> openGallery() async {
+    try {
+      await _bridge.openGallery();
+    } on Exception catch (e) {
+      debugPrint('openGallery failed: $e');
+    }
   }
 
   @override

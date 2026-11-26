@@ -4,25 +4,26 @@ import '../../constants/crop.dart';
 import '../../theme/app_theme.dart';
 import 'test_pattern.dart';
 
+enum PreviewMode { hub, framing, recording }
+
 class FullscreenPreview extends StatelessWidget {
   const FullscreenPreview({
     super.key,
     required this.textureId,
-    required this.configure,
-    required this.configureAnim,
+    required this.mode,
     required this.cropCenterX,
     required this.onCropChanged,
     required this.showGrid,
-    this.showVerticalGuide = true,
   });
 
   final int? textureId;
-  final bool configure;
-  final Animation<double> configureAnim;
+  final PreviewMode mode;
   final double cropCenterX;
   final ValueChanged<double> onCropChanged;
   final bool showGrid;
-  final bool showVerticalGuide;
+
+  static double clampCenter(double value) =>
+      value.clamp(kHalfCropRatio, 1.0 - kHalfCropRatio).toDouble();
 
   @override
   Widget build(BuildContext context) {
@@ -34,8 +35,13 @@ class FullscreenPreview extends StatelessWidget {
             final w = constraints.maxWidth;
             final h = constraints.maxHeight;
             final cropW = w * kCropWidthRatio;
-            final leftPx = cropCenterX * w - cropW / 2;
-            final cropRect = Rect.fromLTWH(leftPx, 0, cropW, h);
+            final cropRect = Rect.fromLTWH(
+              cropCenterX * w - cropW / 2,
+              0,
+              cropW,
+              h,
+            );
+            final framing = mode == PreviewMode.framing;
 
             return Stack(
               fit: StackFit.expand,
@@ -49,59 +55,39 @@ class FullscreenPreview extends StatelessWidget {
                   child: AnimatedOpacity(
                     opacity: showGrid ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
                     child: const CustomPaint(painter: _RuleOfThirdsPainter()),
                   ),
                 ),
-                if (showVerticalGuide)
-                  IgnorePointer(
-                    child: CustomPaint(
-                      painter: _VerticalGuidePainter(cropRect: cropRect),
-                    ),
-                  ),
-                AnimatedBuilder(
-                  animation: configureAnim,
-                  builder: (context, child) {
-                    final t = configureAnim.value;
-                    if (t == 0) return const SizedBox.shrink();
-                    return Opacity(opacity: t, child: child);
-                  },
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      IgnorePointer(
-                        child: CustomPaint(
-                          painter: _CropDimPainter(
-                            cropRect: cropRect,
-                            opacity: 0.42,
-                          ),
-                        ),
-                      ),
-                      Positioned.fromRect(
-                        rect: cropRect,
-                        child: const IgnorePointer(child: _CropFrame()),
-                      ),
-                    ],
+                IgnorePointer(
+                  child: CustomPaint(
+                    painter: _GuidePainter(cropRect: cropRect, mode: mode),
                   ),
                 ),
-                if (configure)
+                if (mode == PreviewMode.hub)
+                  Positioned(
+                    top: 56,
+                    left: cropRect.left + 8,
+                    child: IgnorePointer(
+                      child: Text(
+                        '9:16',
+                        style: AppTheme.label(color: AppColors.text),
+                      ),
+                    ),
+                  ),
+                if (framing)
+                  Positioned.fromRect(
+                    rect: cropRect,
+                    child: const IgnorePointer(child: _DragHandle()),
+                  ),
+                if (framing)
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
-                      onHorizontalDragUpdate: (d) {
-                        final newRatio = (cropCenterX + d.delta.dx / w).clamp(
-                          kHalfCropRatio,
-                          1.0 - kHalfCropRatio,
-                        );
-                        onCropChanged(newRatio.toDouble());
-                      },
-                      onTapDown: (d) {
-                        final ratio = (d.localPosition.dx / w).clamp(
-                          kHalfCropRatio,
-                          1.0 - kHalfCropRatio,
-                        );
-                        onCropChanged(ratio.toDouble());
-                      },
+                      onHorizontalDragUpdate: (d) => onCropChanged(
+                        clampCenter(cropCenterX + d.delta.dx / w),
+                      ),
+                      onTapDown: (d) =>
+                          onCropChanged(clampCenter(d.localPosition.dx / w)),
                     ),
                   ),
               ],
@@ -113,56 +99,104 @@ class FullscreenPreview extends StatelessWidget {
   }
 }
 
-class _CropFrame extends StatelessWidget {
-  const _CropFrame();
+class _DragHandle extends StatelessWidget {
+  const _DragHandle();
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        IgnorePointer(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: AppColors.edit.withValues(alpha: 0.45),
-                width: 1,
-              ),
+    return Center(
+      child: Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        color: AppColors.edit,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.swap_horiz, size: 14, color: AppColors.background),
+            const SizedBox(width: 6),
+            Text(
+              'ARRASTE',
+              style: AppTheme.label(
+                color: AppColors.background,
+              ).copyWith(fontWeight: FontWeight.w700),
             ),
-          ),
+          ],
         ),
-        const CustomPaint(painter: _CropCornersPainter()),
-      ],
+      ),
     );
   }
 }
 
-class _CropCornersPainter extends CustomPainter {
-  const _CropCornersPainter();
+class _GuidePainter extends CustomPainter {
+  _GuidePainter({required this.cropRect, required this.mode});
 
-  static const double _len = 18;
-  static const double _w = 2.2;
+  final Rect cropRect;
+  final PreviewMode mode;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.edit
-      ..strokeWidth = _w
-      ..strokeCap = StrokeCap.round;
-    final width = size.width;
-    final height = size.height;
-    canvas.drawLine(const Offset(0, 0), const Offset(_len, 0), paint);
-    canvas.drawLine(const Offset(0, 0), const Offset(0, _len), paint);
-    canvas.drawLine(Offset(width - _len, 0), Offset(width, 0), paint);
-    canvas.drawLine(Offset(width, 0), Offset(width, _len), paint);
-    canvas.drawLine(Offset(0, height), Offset(_len, height), paint);
-    canvas.drawLine(Offset(0, height - _len), Offset(0, height), paint);
-    canvas.drawLine(Offset(width - _len, height), Offset(width, height), paint);
-    canvas.drawLine(Offset(width, height - _len), Offset(width, height), paint);
+    switch (mode) {
+      case PreviewMode.hub:
+        _dimSides(canvas, size, 0.35);
+        final line = Paint()
+          ..color = AppColors.text.withValues(alpha: 0.6)
+          ..strokeWidth = 1;
+        canvas.drawLine(cropRect.topLeft, cropRect.bottomLeft, line);
+        canvas.drawLine(cropRect.topRight, cropRect.bottomRight, line);
+      case PreviewMode.framing:
+        _dimSides(canvas, size, 0.6);
+        final thirds = Paint()
+          ..color = AppColors.edit.withValues(alpha: 0.4)
+          ..strokeWidth = 1;
+        for (final f in const [1 / 3, 2 / 3]) {
+          final x = cropRect.left + cropRect.width * f;
+          canvas.drawLine(
+            Offset(x, cropRect.top),
+            Offset(x, cropRect.bottom),
+            thirds,
+          );
+        }
+        canvas.drawRect(
+          cropRect.deflate(1),
+          Paint()
+            ..color = AppColors.edit
+            ..strokeWidth = 2
+            ..style = PaintingStyle.stroke,
+        );
+      case PreviewMode.recording:
+        final dash = Paint()
+          ..color = AppColors.text.withValues(alpha: 0.4)
+          ..strokeWidth = 1;
+        _dashed(canvas, cropRect.left, cropRect.top, cropRect.bottom, dash);
+        _dashed(canvas, cropRect.right, cropRect.top, cropRect.bottom, dash);
+    }
+  }
+
+  void _dimSides(Canvas canvas, Size size, double opacity) {
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Offset.zero & size)
+      ..addRect(cropRect);
+    canvas.drawPath(
+      path,
+      Paint()..color = Colors.black.withValues(alpha: opacity),
+    );
+  }
+
+  void _dashed(Canvas canvas, double x, double top, double bottom, Paint p) {
+    const dashLen = 4.0;
+    for (var y = top; y < bottom; y += dashLen * 2) {
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(x, (y + dashLen).clamp(top, bottom)),
+        p,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _CropCornersPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _GuidePainter oldDelegate) =>
+      oldDelegate.cropRect != cropRect || oldDelegate.mode != mode;
 }
 
 class _RuleOfThirdsPainter extends CustomPainter {
@@ -183,47 +217,4 @@ class _RuleOfThirdsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RuleOfThirdsPainter oldDelegate) => false;
-}
-
-class _VerticalGuidePainter extends CustomPainter {
-  _VerticalGuidePainter({required this.cropRect});
-
-  final Rect cropRect;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.edit.withValues(alpha: 0.45)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-    canvas.drawRect(cropRect, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _VerticalGuidePainter oldDelegate) =>
-      oldDelegate.cropRect != cropRect;
-}
-
-class _CropDimPainter extends CustomPainter {
-  _CropDimPainter({required this.cropRect, required this.opacity});
-
-  final Rect cropRect;
-  final double opacity;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final full = Offset.zero & size;
-    final path = Path()
-      ..fillType = PathFillType.evenOdd
-      ..addRect(full)
-      ..addRect(cropRect);
-    canvas.drawPath(
-      path,
-      Paint()..color = Colors.black.withValues(alpha: opacity),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _CropDimPainter oldDelegate) =>
-      oldDelegate.cropRect != cropRect || oldDelegate.opacity != opacity;
 }

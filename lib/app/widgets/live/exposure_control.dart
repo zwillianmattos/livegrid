@@ -23,24 +23,27 @@ class ExposureControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final ev = value * stepEv;
     return BlurPill(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      height: 44,
+      padding: EdgeInsets.zero,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           _Tap(
             icon: Icons.remove,
+            tooltip: 'Menos exposição',
             onTap: value > min ? () => onChanged(value - 1) : null,
           ),
           SizedBox(
-            width: 40,
+            width: 44,
             child: Text(
               '${ev >= 0 ? '+' : ''}${ev.toStringAsFixed(1)}',
               textAlign: TextAlign.center,
-              style: AppTheme.numeric(size: 11, color: AppColors.text),
+              style: AppTheme.numeric(size: 11),
             ),
           ),
           _Tap(
             icon: Icons.add,
+            tooltip: 'Mais exposição',
             onTap: value < max ? () => onChanged(value + 1) : null,
           ),
         ],
@@ -50,22 +53,26 @@ class ExposureControl extends StatelessWidget {
 }
 
 class _Tap extends StatelessWidget {
-  const _Tap({required this.icon, required this.onTap});
+  const _Tap({required this.icon, required this.tooltip, required this.onTap});
 
   final IconData icon;
+  final String tooltip;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Icon(
-          icon,
-          size: 16,
-          color: onTap != null ? AppColors.text : AppColors.textFaint,
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(
+            icon,
+            size: 16,
+            color: onTap != null ? AppColors.text : AppColors.textFaint,
+          ),
         ),
       ),
     );

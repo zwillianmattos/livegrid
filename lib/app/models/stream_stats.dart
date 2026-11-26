@@ -1,5 +1,22 @@
 import 'thermal_status.dart';
 
+enum AudioInputType {
+  builtin,
+  usb,
+  wired,
+  bluetooth,
+  none;
+
+  bool get isExternal => this == usb || this == wired;
+
+  static AudioInputType parse(Object? raw) {
+    for (final t in values) {
+      if (t.name == raw) return t;
+    }
+    return none;
+  }
+}
+
 class StreamStats {
   const StreamStats({
     required this.bitrateABps,
@@ -16,6 +33,8 @@ class StreamStats {
     required this.txBytesB,
     required this.txErrorsB,
     required this.audioLevel,
+    this.audioInputType = AudioInputType.none,
+    this.audioInputName = '',
     required this.timestampMs,
   });
 
@@ -33,6 +52,8 @@ class StreamStats {
   final int txBytesB;
   final int txErrorsB;
   final double audioLevel;
+  final AudioInputType audioInputType;
+  final String audioInputName;
   final int timestampMs;
 
   static const zero = StreamStats(
@@ -50,6 +71,8 @@ class StreamStats {
     txBytesB: 0,
     txErrorsB: 0,
     audioLevel: 0,
+    audioInputType: AudioInputType.none,
+    audioInputName: '',
     timestampMs: 0,
   );
 
@@ -71,6 +94,8 @@ class StreamStats {
       txBytesB: (map['txBytesB'] as num?)?.toInt() ?? 0,
       txErrorsB: (map['txErrorsB'] as num?)?.toInt() ?? 0,
       audioLevel: (map['audioLevel'] as num?)?.toDouble() ?? 0,
+      audioInputType: AudioInputType.parse(map['audioInputType']),
+      audioInputName: (map['audioInputName'] as String?) ?? '',
       timestampMs: (map['timestampMs'] as num?)?.toInt() ?? 0,
     );
   }

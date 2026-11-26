@@ -151,5 +151,31 @@ void main() {
       expect(s.srtLossPct, closeTo(0.12, 0.001));
       expect(s.timestampMs, 1700000000000);
     });
+
+    test('audioInputType ausente vira none e nome vazio', () {
+      final s = StreamStats.fromMap({});
+      expect(s.audioInputType, AudioInputType.none);
+      expect(s.audioInputName, '');
+    });
+
+    test('audioInputType desconhecido vira none', () {
+      final s = StreamStats.fromMap({'audioInputType': 'hdmi'});
+      expect(s.audioInputType, AudioInputType.none);
+    });
+
+    test('audioInputType válidos e nome', () {
+      for (final t in AudioInputType.values) {
+        expect(
+          StreamStats.fromMap({'audioInputType': t.name}).audioInputType,
+          t,
+        );
+      }
+      final s = StreamStats.fromMap({
+        'audioInputType': 'usb',
+        'audioInputName': 'RØDE Wireless GO',
+      });
+      expect(s.audioInputType, AudioInputType.usb);
+      expect(s.audioInputName, 'RØDE Wireless GO');
+    });
   });
 }

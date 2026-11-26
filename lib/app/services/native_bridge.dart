@@ -128,6 +128,14 @@ class NativeBridge {
     }
   }
 
+  Future<void> shareFile(String path) async {
+    await _control.invokeMethod<void>('shareFile', {'path': path});
+  }
+
+  Future<void> openGallery() async {
+    await _control.invokeMethod<void>('openGallery');
+  }
+
   Future<WifiBand> wifiBand() async {
     final raw = await _control.invokeMethod<String>('wifiBand');
     switch (raw) {

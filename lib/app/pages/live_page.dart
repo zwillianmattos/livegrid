@@ -1,20 +1,24 @@
 import 'package:flutter/material.dart';
 
-import '../constants/crop.dart';
 import '../controllers/session_controller.dart';
+import '../models/camera_info.dart';
 import '../models/resolution_profile.dart';
 import '../models/session_state.dart';
-import '../theme/page_routes.dart';
+import '../models/thermal_status.dart';
+import '../theme/app_theme.dart';
 import '../widgets/atoms/blur_icon_button.dart';
+import '../widgets/atoms/pill_button.dart';
 import '../widgets/live/crop_panel.dart';
-import '../widgets/live/draggable_pip.dart';
+import '../widgets/live/crop_pip.dart';
 import '../widgets/live/error_bubble.dart';
 import '../widgets/live/exposure_control.dart';
 import '../widgets/live/fullscreen_preview.dart';
-import '../widgets/live/quick_controls.dart';
+import '../widgets/live/hub_chrome.dart';
 import '../widgets/live/record_button.dart';
-import '../widgets/live/top_chrome.dart';
-import 'settings_page.dart';
+import '../widgets/live/recording_hud.dart';
+import '../widgets/live/right_rail.dart';
+import '../widgets/live/saved_review.dart';
+import '../widgets/quality/quality_sheet.dart';
 
 class LivePage extends StatefulWidget {
   const LivePage({super.key, required this.controller});
@@ -25,21 +29,19 @@ class LivePage extends StatefulWidget {
   State<LivePage> createState() => _LivePageState();
 }
 
-class _LivePageState extends State<LivePage>
-    with SingleTickerProviderStateMixin {
-  static const bool _cropEditEnabled = false;
-  bool _configureMode = false;
+class _LivePageState extends State<LivePage> {
+  static const double _rail = RightRail.width;
+
+  bool _framing = false;
   bool _showGrid = false;
+  bool _exposureOpen = false;
   DateTime? _liveStartedAt;
-  late final AnimationController _modeCtrl;
+  SavedRecording? _lastSaved;
+  bool _showSaved = false;
 
   @override
   void initState() {
     super.initState();
-    _modeCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-    );
     widget.controller.addListener(_onControllerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.initialize();
@@ -49,91 +51,146 @@ class _LivePageState extends State<LivePage>
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
-    _modeCtrl.dispose();
     super.dispose();
   }
 
   void _onControllerChanged() {
-    final wasLive = _liveStartedAt != null;
-    final nowLive = widget.controller.isLive;
-    if (nowLive && !wasLive) {
+    final c = widget.controller;
+    if (c.isLive && _liveStartedAt == null) {
       _liveStartedAt = DateTime.now();
-    } else if (!nowLive && wasLive) {
+    } else if (c.state == SessionState.idle || c.state == SessionState.error) {
       _liveStartedAt = null;
     }
+    if (c.state != SessionState.idle) _framing = false;
     setState(() {});
   }
 
-  void _toggleConfigure() {
-    if (!_cropEditEnabled) return;
+  bool get _recording {
+    final s = widget.controller.state;
+    return widget.controller.isLive || s == SessionState.stopping;
+  }
+
+  void _setFraming(bool value) {
+    if (value && widget.controller.state != SessionState.idle) return;
     setState(() {
-      _configureMode = !_configureMode;
-      if (_configureMode) {
-        _modeCtrl.forward();
-      } else {
-        _modeCtrl.reverse();
-      }
+      _framing = value;
+      _exposureOpen = false;
     });
   }
 
   void _toggleGrid() => setState(() => _showGrid = !_showGrid);
 
+  void _toggleExposure() => setState(() => _exposureOpen = !_exposureOpen);
+
   void _cycleCamera() {
     final cams = widget.controller.cameras;
     if (cams.length < 2) return;
-    final current = widget.controller.selectedCamera;
-    final idx = cams.indexWhere((c) => c.id == current?.id);
-    final next = cams[(idx + 1) % cams.length];
-    widget.controller.selectCamera(next.id);
+    final idx = cams.indexWhere(
+      (c) => c.id == widget.controller.selectedCamera?.id,
+    );
+    widget.controller.selectCamera(cams[(idx + 1) % cams.length].id);
   }
 
-  void _cycleResolution() {
-    final values = CaptureResolution.values;
-    final idx = values.indexOf(widget.controller.profile.capture);
-    final next = values[(idx + 1) % values.length];
-    widget.controller.switchCapture(next);
+  void _toggleSharpness() {
+    final current = widget.controller.profile.capture;
+    widget.controller.switchCapture(
+      current == CaptureResolution.quality
+          ? CaptureResolution.balanced
+          : CaptureResolution.quality,
+    );
   }
 
-  void _openSettings() {
-    Navigator.of(
-      context,
-    ).push(fadeRoute((_) => SettingsPage(controller: widget.controller)));
+  void _openQuality() {
+    setState(() => _exposureOpen = false);
+    showQualitySheet(context, widget.controller);
   }
 
-  Future<void> _stopAndAnnounce(SessionController c) async {
+  Future<void> _stopAndAnnounce() async {
+    final c = widget.controller;
     final wasRecording = c.profile.mode == CaptureMode.recording;
     final info = c.lastStart;
+    final startedAt = _liveStartedAt;
+    final duration = startedAt == null
+        ? null
+        : DateTime.now().difference(startedAt);
     await c.stop();
     if (!mounted) return;
     if (wasRecording && info != null && info.hasFiles) {
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.clearSnackBars();
-      messenger.showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 6),
-          content: Text(
-            'Salvo:\n'
-            '${_basename(info.horizontalFile)}\n'
-            '${_basename(info.verticalFile)}',
-          ),
-        ),
-      );
+      setState(() {
+        _lastSaved = SavedRecording(
+          horizontalFile: info.horizontalFile,
+          verticalFile: info.verticalFile,
+          duration: duration,
+          startedAt: startedAt,
+        );
+        _showSaved = true;
+      });
     }
   }
 
-  static String _basename(String? path) {
-    if (path == null) return '—';
-    final i = path.lastIndexOf('/');
-    return i < 0 ? path : path.substring(i + 1);
+  SavedRecording? get _reviewable {
+    if (_lastSaved != null) return _lastSaved;
+    final info = widget.controller.lastStart;
+    if (info == null || !info.hasFiles) return null;
+    return SavedRecording(
+      horizontalFile: info.horizontalFile,
+      verticalFile: info.verticalFile,
+    );
   }
+
+  String _lensLabel(CameraInfo? cam) {
+    if (cam == null) return '1x';
+    if (cam.lens == CameraLens.front) return 'FRONTAL';
+    if (cam.lens == CameraLens.external) return 'EXTERNA';
+    final focal = _focal(cam);
+    final main = widget.controller.cameras
+        .where((c) => c.lens == CameraLens.back)
+        .map(_focal)
+        .whereType<double>()
+        .firstOrNull;
+    if (focal == null || main == null || main <= 0) return '1x';
+    final ratio = focal / main;
+    final text = ratio == ratio.roundToDouble()
+        ? ratio.toStringAsFixed(0)
+        : ratio.toStringAsFixed(1);
+    return '${text}x';
+  }
+
+  static double? _focal(CameraInfo cam) {
+    final m = RegExp(r'(\d+(?:\.\d+)?)\s*mm').firstMatch(cam.label);
+    return m == null ? null : double.tryParse(m.group(1)!);
+  }
+
+  static String _fpsLabel(int fps) => switch (fps) {
+    <= 24 => '$fps · CINEMA',
+    >= 60 => '$fps · FLUIDO',
+    _ => '$fps · STORIES',
+  };
+
+  List<String> _formatParts(SessionProfile p) => [
+    '16:9 ${p.horizontal.height}p',
+    '9:16 ${p.vertical.width}p',
+    '${p.horizontal.fps} FPS',
+  ];
+
+  (String, Color) _status(SessionState s) => switch (s) {
+    SessionState.idle => ('PRONTO', AppColors.safe),
+    SessionState.starting => ('INICIANDO', AppColors.textMuted),
+    SessionState.error => ('ERRO', AppColors.warn),
+    _ => ('GRAVANDO', AppColors.live),
+  };
 
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
-    final cropCenterX = c.profile.verticalCropCenterX.clamp(
-      kHalfCropRatio,
-      1.0 - kHalfCropRatio,
+    final cropCenterX = FullscreenPreview.clampCenter(
+      c.profile.verticalCropCenterX,
     );
+    final recording = _recording;
+    final mode = recording
+        ? PreviewMode.recording
+        : (_framing ? PreviewMode.framing : PreviewMode.hub);
+    final saved = _showSaved ? _lastSaved : null;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -143,176 +200,282 @@ class _LivePageState extends State<LivePage>
           Positioned.fill(
             child: FullscreenPreview(
               textureId: c.textureId,
-              configure: _configureMode,
-              configureAnim: _modeCtrl,
+              mode: mode,
               cropCenterX: cropCenterX,
               onCropChanged: c.setVerticalCropCenter,
               showGrid: _showGrid,
             ),
           ),
-          SafeArea(
-            child: Stack(
-              children: [
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  right: 12,
-                  child: TopChrome(
-                    state: c.state,
-                    stats: c.stats,
-                    liveStartedAt: _liveStartedAt,
-                    configure: _configureMode,
-                    onConfigure: _cropEditEnabled ? _toggleConfigure : null,
-                    onSettings: _openSettings,
-                  ),
-                ),
-                Positioned.fill(
-                  child: DraggablePip(
-                    textureId: c.textureId,
-                    cropCenterX: cropCenterX,
-                  ),
-                ),
-                if (c.state == SessionState.idle)
-                  Positioned(
-                    left: 16,
-                    bottom: 64,
-                    child: QuickControls(
-                      cameras: c.cameras,
-                      selectedCamera: c.selectedCamera,
-                      resolution: c.profile.capture,
-                      onCameraTap: _cycleCamera,
-                      onResolutionTap: _cycleResolution,
-                    ),
-                  ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 20,
-                  child: Center(
-                    child: _FadeHide(
-                      anim: _modeCtrl,
-                      child: RecordButton(
-                        state: c.state,
-                        onStart: c.start,
-                        onStop: () => _stopAndAnnounce(c),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 16,
-                  child: _SlideUp(
-                    anim: _modeCtrl,
-                    child: CropPanel(
-                      cropCenterX: cropCenterX,
-                      onCropChanged: c.setVerticalCropCenter,
-                      onRecenter: () => c.setVerticalCropCenter(0.5),
-                      onDone: _toggleConfigure,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 16,
-                  bottom: 16,
-                  child: BlurIconButton(
-                    icon: Icons.grid_3x3,
-                    active: _showGrid,
-                    tooltip: 'Grade (rule of thirds)',
-                    onPressed: _toggleGrid,
-                  ),
-                ),
-                Positioned(
-                  left: 16,
-                  bottom: 16,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (c.capabilities.hasFlash)
-                        BlurIconButton(
-                          icon: c.torchEnabled
-                              ? Icons.flash_on
-                              : Icons.flash_off,
-                          active: c.torchEnabled,
-                          tooltip: 'Flash',
-                          onPressed: c.toggleTorch,
-                        ),
-                      if (c.capabilities.hasExposureControl) ...[
-                        const SizedBox(width: 8),
-                        ExposureControl(
-                          value: c.exposureValue,
-                          min: c.capabilities.exposureMin,
-                          max: c.capabilities.exposureMax,
-                          stepEv: c.capabilities.exposureStepEv,
-                          onChanged: c.setExposure,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (c.errorMessage != null)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 100,
-                    child: Center(child: ErrorBubble(message: c.errorMessage!)),
-                  ),
-              ],
+          if (mode == PreviewMode.hub) ..._hub(c),
+          if (mode == PreviewMode.framing) ..._framingChrome(c, cropCenterX),
+          if (mode == PreviewMode.recording)
+            ..._recordingChrome(c, cropCenterX),
+          if (c.errorMessage != null && saved == null)
+            Positioned(
+              left: 16,
+              right: _rail + 16,
+              bottom: 72,
+              child: SafeArea(
+                child: Center(child: ErrorBubble(message: c.errorMessage!)),
+              ),
             ),
-          ),
+          if (saved != null)
+            Positioned.fill(
+              child: SavedReview(
+                recording: saved,
+                onClose: () => setState(() => _showSaved = false),
+                onShareVertical: c.shareFile,
+                onOpenGallery: c.openGallery,
+              ),
+            ),
         ],
       ),
     );
   }
-}
 
-class _FadeHide extends StatelessWidget {
-  const _FadeHide({required this.anim, required this.child});
-
-  final Animation<double> anim;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: anim,
-      builder: (context, inner) {
-        final t = anim.value;
-        return Opacity(
-          opacity: 1.0 - t,
-          child: IgnorePointer(ignoring: t > 0.5, child: inner),
-        );
-      },
-      child: child,
-    );
-  }
-}
-
-class _SlideUp extends StatelessWidget {
-  const _SlideUp({required this.anim, required this.child});
-
-  final Animation<double> anim;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: anim,
-      builder: (context, inner) {
-        final t = anim.value;
-        return IgnorePointer(
-          ignoring: t < 0.5,
-          child: Opacity(
-            opacity: t,
-            child: Transform.translate(
-              offset: Offset(0, (1.0 - t) * 24),
-              child: inner,
-            ),
+  List<Widget> _hub(SessionController c) {
+    final idle = c.state == SessionState.idle || c.state == SessionState.error;
+    final (statusLabel, statusColor) = _status(c.state);
+    final reviewable = _reviewable;
+    final quality = c.profile.capture == CaptureResolution.quality;
+    return [
+      Positioned(
+        top: 0,
+        bottom: 0,
+        right: 0,
+        child: RightRail(
+          top: [
+            if (c.capabilities.hasFlash)
+              BlurIconButton(
+                icon: c.torchEnabled ? Icons.flash_on : Icons.flash_off,
+                active: c.torchEnabled,
+                tooltip: 'Flash',
+                onPressed: c.toggleTorch,
+              ),
+            if (c.capabilities.hasExposureControl)
+              BlurIconButton(
+                icon: Icons.exposure,
+                active: _exposureOpen,
+                tooltip: 'Exposição',
+                onPressed: _toggleExposure,
+              ),
+          ],
+          center: RecordButton(
+            state: c.state,
+            onStart: c.start,
+            onStop: _stopAndAnnounce,
           ),
-        );
-      },
-      child: child,
-    );
+          bottom: [
+            BlurIconButton(
+              icon: Icons.grid_3x3,
+              active: _showGrid,
+              tooltip: 'Grade',
+              onPressed: _toggleGrid,
+            ),
+          ],
+        ),
+      ),
+      SafeArea(
+        child: Stack(
+          children: [
+            Positioned(
+              top: 10,
+              left: 16,
+              right: _rail + 72,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    StatusPill(label: statusLabel, color: statusColor),
+                    const SizedBox(width: 8),
+                    FormatPill(
+                      parts: _formatParts(c.profile),
+                      onTap: _openQuality,
+                    ),
+                    if (c.stats.audioInputType.isExternal) ...[
+                      const SizedBox(width: 8),
+                      ExternalMicPill(type: c.stats.audioInputType),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: _rail + 16,
+              child: BlurIconButton(
+                icon: Icons.tune,
+                tooltip: 'Qualidade',
+                onPressed: _openQuality,
+              ),
+            ),
+            if (_exposureOpen && c.capabilities.hasExposureControl)
+              Positioned(
+                top: 68,
+                right: _rail + 8,
+                child: ExposureControl(
+                  value: c.exposureValue,
+                  min: c.capabilities.exposureMin,
+                  max: c.capabilities.exposureMax,
+                  stepEv: c.capabilities.exposureStepEv,
+                  onChanged: c.setExposure,
+                ),
+              ),
+            if (reviewable != null && idle)
+              Positioned(
+                left: 16,
+                bottom: 16,
+                child: LastRecordingThumb(
+                  onTap: () => setState(() {
+                    _lastSaved = reviewable;
+                    _showSaved = true;
+                  }),
+                ),
+              ),
+            Positioned(
+              left: 80,
+              right: _rail + 8,
+              bottom: 16,
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PillButton(
+                        label: _lensLabel(c.selectedCamera),
+                        semanticLabel: 'Trocar lente',
+                        onPressed: idle && c.cameras.length > 1
+                            ? _cycleCamera
+                            : null,
+                      ),
+                      const SizedBox(width: 6),
+                      PillButton(
+                        label: quality ? 'NITIDEZ ALTA' : 'NITIDEZ PADRÃO',
+                        onPressed: idle ? _toggleSharpness : null,
+                      ),
+                      const SizedBox(width: 6),
+                      PillButton(
+                        label: _fpsLabel(c.profile.horizontal.fps),
+                        semanticLabel: 'Quadros por segundo',
+                        onPressed: idle ? _openQuality : null,
+                      ),
+                      const SizedBox(width: 6),
+                      PillButton(
+                        label: 'ENQUADRAR',
+                        accent: AppColors.edit,
+                        onPressed: c.state == SessionState.idle
+                            ? () => _setFraming(true)
+                            : null,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _framingChrome(SessionController c, double cropCenterX) {
+    return [
+      SafeArea(
+        child: Stack(
+          children: [
+            const Positioned(
+              top: 16,
+              left: 16,
+              child: StatusPill(
+                label: 'ENQUADRAR 9:16',
+                color: AppColors.edit,
+                squareDot: true,
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: CropPanel(
+                cropCenterX: cropCenterX,
+                onCropChanged: c.setVerticalCropCenter,
+                onRecenter: () => c.setVerticalCropCenter(0.5),
+                onDone: () => _setFraming(false),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _recordingChrome(SessionController c, double cropCenterX) {
+    final hot =
+        c.state == SessionState.degraded ||
+        c.stats.thermalStatus.index >= ThermalStatus.severe.index;
+    return [
+      Positioned(
+        top: 0,
+        bottom: 0,
+        right: 0,
+        child: RightRail(
+          background: null,
+          top: const [],
+          center: RecordButton(
+            state: c.state,
+            onStart: c.start,
+            onStop: _stopAndAnnounce,
+          ),
+          bottom: const [],
+        ),
+      ),
+      SafeArea(
+        child: Stack(
+          children: [
+            Positioned(
+              top: 16,
+              left: 0,
+              right: 0,
+              child: Center(child: RecTimerPill(startedAt: _liveStartedAt)),
+            ),
+            Positioned(
+              top: 16,
+              left: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  MicLevelPill(
+                    level: c.stats.audioLevel,
+                    inputType: c.stats.audioInputType,
+                    inputName: c.stats.audioInputName,
+                  ),
+                  if (hot) const SizedBox(height: 8),
+                  if (hot) const ThermalPill(fps: 24),
+                ],
+              ),
+            ),
+            Positioned(
+              left: 16,
+              bottom: 16,
+              child: CropPip(textureId: c.textureId, cropCenterX: cropCenterX),
+            ),
+            Positioned(
+              left: 100,
+              bottom: 16,
+              child: Row(
+                children: [
+                  BitrateChip(label: 'H', bps: c.stats.bitrateABps),
+                  const SizedBox(width: 6),
+                  BitrateChip(label: 'V', bps: c.stats.bitrateBBps),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
   }
 }
