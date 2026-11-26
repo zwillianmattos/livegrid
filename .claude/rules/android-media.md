@@ -22,7 +22,7 @@ paths:
 
 ## Áudio
 
-- Fontes: `CAMCORDER`, depois `MIC`. **Não use `UNPROCESSED`**: sem AGC, sai quase mudo em Samsung.
+- Fontes: `CAMCORDER`, depois `MIC`. Com mic externo preferido e não roteado (Samsung), `MIC` e depois `VOICE_RECOGNITION` no mesmo formato. **Não use `UNPROCESSED`**: sem AGC, sai quase mudo em Samsung.
 - Taxas: 48000, depois 44100. Use só taxas presentes na tabela AAC (`AudioEncoder.AAC_FREQ_INDEX`).
 - Mic indisponível: grava mudo e loga. Nunca derruba a gravação.
 

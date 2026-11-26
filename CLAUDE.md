@@ -16,6 +16,11 @@ Stack: Flutter (UI/controle), iOS nativo (Swift/AVFoundation/VideoToolbox) e And
 - A UI Flutter atende **story makers**: só grava 16:9 + 9:16 no celular.
 - O perfil sempre inicia em `CaptureMode.recording`.
 - A UI não tem seletor de modo nem tela de Rede.
+- `LivePage` tem quatro estados de tela (landscape, referência 844×390):
+  - **02 Câmera (hub, idle):** guia 9:16 sempre visível no crop atual; pills PRONTO + formato (abre `showQualitySheet`); linha inferior: lente, NITIDEZ PADRÃO/ALTA (`switchCapture` balanced↔quality), FPS (abre o sheet), ENQUADRAR; rail direito de 96 px com flash/exposição (só se `capabilities` permitir), gravar e grade; miniatura da última gravação abre 05.
+  - **03 Enquadrar:** só em `idle`. Arrastar no preview ou o slider move `verticalCropCenterX`; CENTRALIZAR, OK sai. Sem rail nem botão gravar.
+  - **04 Gravando:** pill REC + mm:ss (derivado de `_liveStartedAt`), nível de mic + entrada ativa (INTERNO / USB / FIO + nome; SEM ÁUDIO em `none`), AQUECENDO · 24 FPS em `degraded`/térmica ≥ `severe`, PiP 9:16 72×128, chips de bitrate H/V, botão parar.
+  - **05 Salvo:** overlay após `stop()` com arquivos: SALVO NA GALERIA, duração · data, miniaturas 16:9/9:16 com nome e tamanho, COMPARTILHAR 9:16 (`shareFile` do vertical), ABRIR GALERIA (`openGallery`), NOVA GRAVAÇÃO.
 - O modo `live` está implementado no nativo (Swift/Kotlin) e oculto na UI. **Não remover o código nativo de streaming.**
 
 ## Estado do sistema
@@ -28,11 +33,12 @@ Stack: Flutter (UI/controle), iOS nativo (Swift/AVFoundation/VideoToolbox) e And
 | Encoder | H.264 por hardware (VideoToolbox / MediaCodec). B-frames=0, GOP=fps (1 s). Android gravação: High → Main → Baseline → default, VBR se suportado, sem `KEY_LATENCY`, sem `KEY_LEVEL` fixo. Android live: Main, CBR, `KEY_LATENCY=1`. iOS: `RealTime=true`, Baseline (live) / High (recording). |
 | Câmera Android | Open gate: `OpenGateCamera.pickSize` abre sempre 4:3 (sensor inteiro, ≥30 fps). Tier `quality` usa o maior 4:3; os outros usam o menor 4:3 com altura ≥ `tier.height * 16/9`. Crops 16:9 e 9:16 no shader do `GlRenderer`, com downscale de 4 amostras (`uStep`). Fps validado contra `CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES`. |
 | Câmera iOS | Preset 16:9 (`CameraPreview.presetFor`). Crop vertical no tamanho do crop (ignora dimensões do perfil vertical). |
-| Áudio Android | `AudioRecord` (CAMCORDER → MIC; 48 → 44,1 kHz) PCM mono → `MediaCodec` AAC-LC 128 kbps (`encoder/AudioEncoder.kt`). Só no caminho de gravação. A trilha entra no muxer na criação, com `AudioEncoder.trackFormat()` (csd-0 montado à mão), sem espera nem timeout. PTS de áudio e vídeo em `System.nanoTime`; `GlRenderer.toMonotonicNanos` converte câmeras com timestamp BOOTTIME (Samsung). RMS (0..1) sai em `audioLevel`. Se o mic falha, grava mudo. |
-| Áudio iOS | Ausente. Gravações iOS saem mudas (Dívida #9). |
+| Áudio Android | `AudioRecord` (CAMCORDER → MIC; 48 → 44,1 kHz) PCM → `MediaCodec` AAC-LC (`encoder/AudioEncoder.kt`). Só no caminho de gravação. Entrada automática via `AudioManager.getDevices(GET_DEVICES_INPUTS)` + `setPreferredDevice`: USB > com fio/line > `BUILTIN_MIC`; Bluetooth nunca. Formato (taxa/canais) decidido no `start()` sem esperar; a verificação de rota roda na thread `audio-enc`. Se o externo não for o `routedDevice` (Samsung + CAMCORDER), solta o CAMCORDER e testa MIC → VOICE_RECOGNITION um por vez no mesmo formato; se nenhum rotear, recria o CAMCORDER no mic interno. `AudioDeviceCallback` reaplica o preferido no hot-plug sem mudar o formato. Limitação: em Samsung com CAMCORDER, plugar USB no meio da gravação não troca a entrada (só vale na próxima gravação). PTS = âncora de `getTimestamp(MONOTONIC)` + amostras lidas, ressincronizado (só para frente, >20 ms) a cada ~1 s e após hot-plug. `ERROR_DEAD_OBJECT` repetido recria o `AudioRecord`; se falhar, a trilha segue com silêncio. Estéreo 192 kbps se o device aceita 2 canais (built-in: se `CHANNEL_IN_STEREO` inicializa), senão mono 128 kbps; formato fixo no start. Stats `audioInputType` (`builtin`\|`usb`\|`wired`\|`bluetooth`\|`none`) e `audioInputName` (`productName`, `none` sem gravação) vêm do `routedDevice`. A trilha entra no muxer na criação, com `AudioEncoder.trackFormat()` (csd-0 montado à mão), sem espera nem timeout. PTS de áudio e vídeo em `System.nanoTime`; `GlRenderer.toMonotonicNanos` converte câmeras com timestamp BOOTTIME (Samsung). RMS (0..1) sai em `audioLevel`. Se o mic não abre no `start()`, grava sem trilha de áudio. |
+| Áudio iOS | `AVCaptureDeviceInput(audio)` + `AVCaptureAudioDataOutput` na mesma `AVCaptureSession` (`CameraPreview.attachAudioLocked`), só com permissão de mic; sem permissão grava mudo. `automaticallyConfiguresApplicationAudioSession = true`: mic USB/Lightning/P2 entra sozinho quando plugado, senão o embutido; Bluetooth HFP não é usado. Canais seguem o formato do input (embutido mono, interface USB estéreo). `FileRecorder` adiciona AAC-LC 48 kHz (128 kbps mono / 192 kbps estéreo) aos dois writers, com os mesmos sample buffers; sessão começa no primeiro PTS de vídeo e áudio anterior é descartado. PTS da captura sem conversão. Só gravação; live segue só vídeo. Stats: `audioLevel`, `audioInputType`, `audioInputName`. |
 | Estabilização | Desligada (`preferredVideoStabilizationMode = .off` no iOS; nenhuma flag no Android). |
 | Foreground service | Android: `LiveGridForegroundService` inicia em `start` e para em `stop`. Conferir os tipos no manifest ao alterar. |
 | Política térmica | `SessionController._applyThermalPolicy` reduz bitrate/fps e corta o vertical conforme `ThermalStatus`. |
+| Inicialização | Sem splash: LaunchScreen iOS preto sem imagem; Android `LaunchTheme`/`NormalTheme` pretos e, no API 31+ (`values-v31`), SplashScreen com fundo preto e ícone transparente. `LaunchGate` checa permissões (em paralelo) e, com câmera liberada, dispara `SessionController.initialize()` antes de montar a `LivePage`. `initialize()` é idempotente (Future em cache, zerado em erro): `init` → notifica com `textureId` → `listCameras` + `cameraCapabilities` em paralelo. `wifiBand`/`deviceIp` só rodam em `start()` no modo `live`. O `init` nativo responde o `textureId` antes de abrir a câmera: Android posta `startPreview` no main looper; iOS configura e chama `startRunning` em `sessionQueue` (`CameraPreview.startInBackground`). Android `cameraCapabilities` lê as `CameraCharacteristics` enquanto a câmera não abriu. |
 
 ## Comandos
 
@@ -81,8 +87,8 @@ Chaves de assinatura (`android/key.properties`, `*.jks`, `*.keystore`) estão bl
                        │ MethodChannel + EventChannel
                        ▼
 ┌──────────────────── FLUTTER ──────────────────────────────┐
-│  LivePage (preview + record button + QuickControls)        │
-│  SettingsPage (bitrate H/V + FPS)                          │
+│  LivePage (hub 02 · enquadrar 03 · gravando 04 · salvo 05) │
+│  QualitySheet (nitidez 9:16 + FPS + bitrate H/V)           │
 │  SessionController (estado, thermal policy)                │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -104,19 +110,31 @@ lib/
       stream_stats.dart
       thermal_status.dart
     pages/
-      live_page.dart                # tela principal full-screen; QuickControls (lente,
-                                    # resolução) visíveis só em SessionState.idle;
-                                    # torch + ExposureControl (Android)
-      settings_page.dart            # tela única: bitrate H/V + FPS da câmera
+      live_page.dart                # tela principal full-screen: hub, enquadrar,
+                                    # gravando e overlay Salvo (ver "Escopo da UI")
+      permission_page.dart          # 01 · Permissões (landscape, 2 colunas): câmera,
+                                    # microfone, galeria; PERMITIR ACESSOS / ABRIR AJUSTES
     services/native_bridge.dart     # wrapper tipado do MethodChannel
+    services/permission_probe.dart  # PermissionProbe (check/request/openSettings),
+                                    # SystemPermissionProbe via permission_handler
     theme/{app_theme,page_routes}.dart
     widgets/
-      atoms/{blur_icon_button,blur_pill,separator_dot,status_dot}.dart
-      live/{crop_panel,draggable_pip,error_bubble,exposure_control,
-            fullscreen_preview,quick_controls,record_button,test_pattern,
-            top_chrome}.dart
+      atoms/{blur_icon_button,blur_pill,pill_button,status_dot}.dart
+      live/
+        fullscreen_preview.dart     # preview 16:9 + guia 9:16 por PreviewMode
+                                    # {hub|framing|recording}; arraste no framing
+        hub_chrome.dart             # StatusPill, FormatPill, LastRecordingThumb
+        right_rail.dart             # rail direito 96 px (topo / centro / base)
+        record_button.dart
+        crop_panel.dart             # barra do Enquadrar: CENTRO, slider, %, OK
+        exposure_control.dart       # popover −/+ ao lado do rail (Android)
+        recording_hud.dart          # RecTimerPill, MicLevelPill, ThermalPill, BitrateChip
+        crop_pip.dart               # PiP 9:16 fixo (crop da mesma Texture)
+        saved_review.dart           # overlay 05 Salvo + SavedRecording
+        error_bubble.dart / test_pattern.dart
+      quality/quality_sheet.dart    # showQualitySheet: side sheet 480 px à direita sobre
+                                    # o preview; tier PADRÃO/ALTA, FPS, bitrate avançado
       settings/slider_row.dart
-      settings/{resolution_row,url_preview}.dart   # sem imports (Dívida #10)
 
 ios/Runner/
   AppDelegate.swift / SceneDelegate.swift
@@ -157,6 +175,8 @@ android/app/src/main/kotlin/br/com/wanmind/livegrid/
 | `cameraCapabilities` | — | `{hasFlash, exposureMin, exposureMax, exposureStepEv}` | Android |
 | `wifiBand` | — | `"2.4"` \| `"5"` \| `"unknown"` | iOS, Android |
 | `deviceIp` | — | `String?` (IP local da Wi-Fi) | iOS, Android |
+| `shareFile` | `{path: String}` (caminho devolvido por `startCapture`) | `null`. Abre o share sheet (`video/mp4`). Espera a publicação/finalização pendente do `stop`. Android: espera a thread de publicação daquele path (15 s) e, se ainda rodar, erro `publish_pending`; compartilha a URI do MediaStore (mapa path→URI de `publishRecording`, últimas 20, senão busca por `DISPLAY_NAME`); se a publicação falhou e o arquivo privado existe, compartilha via `FileProvider` (`${applicationId}.fileprovider`, `res/xml/file_paths.xml`); `ACTION_SEND` + chooser. iOS: `UIActivityViewController` com o arquivo em `Documents/recordings` (mantido após salvar na fototeca). Erro `file_not_found` se não achar. | iOS, Android |
+| `openGallery` | — | `null`. Android: `ACTION_VIEW` em `MediaStore.Video.Media.EXTERNAL_CONTENT_URI` (`video/*`), fallback `CATEGORY_APP_GALLERY`. iOS: abre `photos-redirect://`. Erro `no_gallery` se falhar. | iOS, Android |
 
 Métodos só do Android lançam `MissingPluginException` no iOS. O Dart engole essa exceção. `cameraCapabilities` no iOS resulta em tudo zerado/false.
 
@@ -167,7 +187,8 @@ Métodos só do Android lançam `MissingPluginException` no iOS. O Dart engole e
   srtRtt, srtLoss,                                    // sempre 0 (campos legados)
   txDatagramsA, txBytesA, txErrorsA,                  // só Android
   txDatagramsB, txBytesB, txErrorsB,                  // só Android
-  audioLevel,                                         // 0..1 RMS; só Android, iOS = 0
+  audioLevel,                                         // 0..1 RMS; iOS, Android
+  audioInputType, audioInputName,                     // iOS, Android
   timestampMs }
 ```
 
@@ -189,8 +210,6 @@ Cada item foi confirmado no código. Antes de corrigir, releia o arquivo apontad
 | 5 | `ios/Runner/*` | iOS não implementa `setTorch`, `setExposure`, `cameraCapabilities` nem `switchCamera`. | No iOS, a LivePage não mostra flash/exposição, e a troca de lente só vale no próximo `start()`. |
 | 7 | `ios/Runner/FlutterBridge.swift:emitStats` | Não emite `txBytes*/txDatagrams*/txErrors*`. | Stats de tx zerados no iOS. |
 | 8 | `ios/Runner/UdpPublisher.swift` | O nome do arquivo não bate com a classe `TcpPublisher`. | Renomear para `TcpPublisher.swift`. |
-| 9 | `ios/Runner/FileRecorder.swift`, `CameraPreview.swift` | Sem `AVCaptureAudioDataOutput`; `FileRecorder` só tem input de vídeo. `Info.plist` declara captura de áudio. | Gravações iOS mudas. |
-| 10 | `lib/app/widgets/settings/{resolution_row,url_preview}.dart` | Arquivos sem imports. | Código morto. |
 | 11 | iOS `CameraPreview.swift` | Sem open gate: usa preset 16:9, então o vertical sai do crop de 1080 de altura (606×1080) no tier `balanced`. | Vertical iOS com menos detalhe que o Android. |
 
 ## Decisões fixas (não reverter sem motivo forte)
@@ -222,8 +241,9 @@ Definidos em `lib/app/models/resolution_profile.dart`. `CaptureResolution.width/
 | `quality` | 1920×1080 | 1080×1920 (sensor inteiro) | 16 / 14 Mbps |
 
 - 30 fps e GOP = fps (1 s) em todos.
-- Sliders: 2 a `kHorizontalMaxKbps` (24 Mbps) para H e 2 a `kVerticalMaxKbps` (20 Mbps) para V.
-- FPS selecionável: 24/30/60. `SettingsPage._save` mantém `gop = fps`.
+- Sliders (seção "Bitrate · avançado" do `QualitySheet`): 2 a `kHorizontalMaxKbps` (24 Mbps) para H e 2 a `kVerticalMaxKbps` (20 Mbps) para V, passo de 1 Mbps. Ao trocar o tier sem mexer nos sliders, valem os bitrates padrão do novo tier.
+- Tier no `QualitySheet`: PADRÃO = `balanced`, ALTA = `quality`. `economic` não aparece; se o perfil estiver nele, nenhuma opção fica marcada e salvar sem escolher mantém `economic`.
+- FPS selecionável: 24/30/60 (sem consulta de capacidade nativa; 60 sempre habilitado). `QualitySheet._save` chama `switchCapture` se o tier mudou, depois `updateProfile` com `gop = fps` e `mode = recording`, e reinicia a sessão se estiver ativa.
 
 ## Política térmica
 
@@ -241,9 +261,14 @@ No iOS, `moderate` nunca dispara (Dívida #3).
 
 ## Permissões
 
-- **iOS:** `NSCameraUsageDescription`, `NSMicrophoneUsageDescription` (declarada, sem uso real: Dívida #9), `NSPhotoLibraryAddUsageDescription`.
+- **iOS:** `NSCameraUsageDescription`, `NSMicrophoneUsageDescription` (áudio das gravações), `NSPhotoLibraryAddUsageDescription`.
 - **Android:** `CAMERA`, `RECORD_AUDIO`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE_MICROPHONE` (Android 14+), `WRITE_EXTERNAL_STORAGE` (pré-Q).
-- **Flutter:** `permission_handler`, via `SessionController._defaultPermissionGate`.
+- **Flutter:** `permission_handler`, atrás de `PermissionProbe` (`services/permission_probe.dart`, injetável em `SessionController(permissionProbe:)`). Status por permissão: `granted` / `pending` / `permanentlyDenied` (`restricted` conta como negado).
+  - `LaunchGate` (`main.dart`) roda `checkPermissions()` no launch: câmera concedida abre a `LivePage`; senão, a `PermissionPage`. Ao conceder, `fadeRoute` troca para a `LivePage`.
+  - `PermissionPage` pede câmera + microfone (+ notificação no Android, sem linha na UI) e galeria. Galeria: `Permission.photosAddOnly` no iOS; no Android conta como concedida (MediaStore no Q+). Com alguma permissão negada de vez, o botão vira "ABRIR AJUSTES" (`openAppSettings`) e o status é relido ao voltar para o app.
+  - `permissionsReady` = câmera concedida. Microfone é opcional: sem ele o app grava mudo.
+  - `start()` usa `_defaultPermissionGate`: relê os status, pede de novo só se a câmera não estiver concedida e falha só sem câmera.
+  - iOS: o `Podfile` define `PERMISSION_PHOTOS=1` para o `permission_handler` resolver `photosAddOnly` (linha Galeria). Exige `pod install` após mudança.
 
 ## Limitações do iOS
 
